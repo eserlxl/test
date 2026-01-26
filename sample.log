@@ -1,0 +1,18 @@
+[2025-01-27 10:00:00] [INFO] Application started
+[2025-01-27 10:00:05] [DEBUG] Loading configuration file
+[2025-01-27 10:00:10] [INFO] Configuration loaded successfully
+[2025-01-27 10:00:15] [WARNING] Cache size exceeds recommended limit
+[2025-01-27 10:00:20] [INFO] Database connection established
+[2025-01-27 10:00:25] [ERROR] Failed to connect to external service: Connection timeout
+[2025-01-27 10:00:30] [INFO] Retrying connection...
+[2025-01-27 10:00:35] [ERROR] Failed to connect to external service: Connection timeout
+[2025-01-27 10:00:40] [WARNING] Using fallback service endpoint
+[2025-01-27 10:00:45] [INFO] Connection successful
+[2025-01-27 10:00:50] [DEBUG] Processing user request ID: 12345
+[2025-01-27 10:00:55] [INFO] Request processed successfully
+[2025-01-27 10:01:00] [CRITICAL] Database connection lost
+[2025-01-27 10:01:05] [ERROR] Unable to recover database connection
+[2025-01-27 10:01:10] [WARNING] Switching to read-only mode
+[2025-01-27 10:01:15] [INFO] Service running in degraded mode
+[2025-01-27 10:01:20] [DEBUG] Health check performed
+[2025-01-27 10:01:25] [INFO] Service status: OK
