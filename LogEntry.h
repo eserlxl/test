@@ -101,7 +101,7 @@ struct LogEntry {
         bool include_source = true;
         bool include_thread = true;
     };
-    std::string toJson(const JsonOptions& options = {}) const;
+    std::string toJson(const JsonOptions& options = JsonOptions{}) const;
 
     // Comparison (C++20)
     std::strong_ordering operator<=>(const LogEntry& other) const;

@@ -423,3 +423,139 @@ TEST_F(LogAnalyzerTest, AttributesAndTags) {
     EXPECT_TRUE(entry.hasTag("critical"));
     EXPECT_FALSE(entry.hasTag("ui"));
 }
+
+// --- Suite 7: AsyncLoadingTest ---
+
+TEST_F(LogAnalyzerTest, AsyncLoadSuccess) {
+    LogAnalyzer analyzer;
+    std::promise<void> progress_called;
+    
+    auto future = analyzer.loadFileAsync(testLogFile, [&](const ProgressInfo& info) {
+        if (info.lines_processed > 0) {
+            try {
+                progress_called.set_value();
+            } catch (const std::future_error&) {
+                // Ignore multiple calls
+            }
+        }
+    });
+    
+    auto result = future.get();
+    EXPECT_EQ(result.loaded_count, 5);
+    EXPECT_EQ(analyzer.getEntries().size(), 5);
+    
+    // Wait for progress callback (should be instant for small file)
+    auto status = progress_called.get_future().wait_for(std::chrono::seconds(1));
+    EXPECT_EQ(status, std::future_status::ready);
+}
+
+// --- Suite 8: StructuredDataTest ---
+
+TEST_F(LogAnalyzerTest, AttributeFiltering) {
+    LogAnalyzer analyzer;
+    // Create entries with attributes
+    LogEntry e1 = LogEntry().withMessage("M1").withAttribute("user", "alice");
+    LogEntry e2 = LogEntry().withMessage("M2").withAttribute("user", "bob");
+    LogEntry e3 = LogEntry().withMessage("M3").withAttribute("user", "alice").withAttribute("role", "admin");
+    
+    analyzer.addEntry(e1);
+    analyzer.addEntry(e2);
+    analyzer.addEntry(e3);
+    
+    FilterOptions options;
+    options.attribute_matches["user"] = "alice";
+    
+    auto filtered = analyzer.getFilteredEntries(options);
+    EXPECT_EQ(filtered.size(), 2); // e1 and e3
+    EXPECT_EQ(filtered[0].message, "M1");
+    EXPECT_EQ(filtered[1].message, "M3");
+    
+    options.attribute_matches["role"] = "admin";
+    filtered = analyzer.getFilteredEntries(options);
+    EXPECT_EQ(filtered.size(), 1); // e3
+    EXPECT_EQ(filtered[0].message, "M3");
+}
+
+TEST_F(LogAnalyzerTest, TagFiltering) {
+    LogAnalyzer analyzer;
+    LogEntry e1 = LogEntry().withMessage("M1").withTag("network");
+    LogEntry e2 = LogEntry().withMessage("M2").withTag("ui");
+    LogEntry e3 = LogEntry().withMessage("M3").withTag("network").withTag("critical");
+    
+    analyzer.addEntry(e1);
+    analyzer.addEntry(e2);
+    analyzer.addEntry(e3);
+    
+    FilterOptions options;
+    options.required_tags.insert("network");
+    
+    auto filtered = analyzer.getFilteredEntries(options);
+    EXPECT_EQ(filtered.size(), 2); // e1 and e3
+    
+    options.required_tags.insert("critical");
+    filtered = analyzer.getFilteredEntries(options);
+    EXPECT_EQ(filtered.size(), 1); // e3
+}
+
+// --- Suite 9: DeepStatisticsTest ---
+
+TEST_F(LogAnalyzerTest, DeepStatisticsTest) {
+    LogAnalyzer analyzer;
+    analyzer.loadFile(testLogFile);
+    auto stats = analyzer.getStatistics();
+    
+    // Check timeline distribution (bucketed by minute)
+    // 10:00:00 -> bucket 10:00
+    // 10:00:05 -> bucket 10:00
+    // 10:01:00 -> bucket 10:01
+    // 10:02:00 -> bucket 10:02
+    // 10:03:00 -> bucket 10:03
+    
+    EXPECT_EQ(stats.timeline_distribution.size(), 4);
+    
+    size_t sum = 0;
+    for (auto& [tp, count] : stats.timeline_distribution) {
+        sum += count;
+    }
+    EXPECT_EQ(sum, 5);
+}
+
+// --- Suite 10: LogEntryExtraTest ---
+
+TEST_F(LogAnalyzerTest, LogEntryExtraTest) {
+    auto loc = std::source_location::current();
+    LogEntry entry = LogEntry::create(LogLevel::ERROR, "Test Error", loc);
+    
+    EXPECT_EQ(entry.level, LogLevel::ERROR);
+    EXPECT_EQ(entry.message, "Test Error");
+    EXPECT_FALSE(entry.source_file.empty());
+    EXPECT_EQ(entry.source_line, loc.line());
+    
+    try {
+        throw std::runtime_error("Failure");
+    } catch (const std::exception& e) {
+        entry.withException(e);
+    }
+    
+    EXPECT_FALSE(entry.getAttributeAsString("exception_type").empty());
+    EXPECT_EQ(entry.getAttributeAsString("exception_message"), "Failure");
+    
+    // Check JSON output
+    std::string json = entry.toJson();
+    EXPECT_NE(json.find("\"message\":\"Test Error\""), std::string::npos);
+    EXPECT_NE(json.find("\"exception_message\":\"Failure\""), std::string::npos);
+}
+
+// --- Suite 11: ResilienceTests ---
+
+TEST_F(LogAnalyzerTest, ResilienceTests) {
+    // Test with invalid regex
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.strict_mode = true;
+    config.line_pattern = "[Invalid Regex"; // Missing closing bracket
+    
+    analyzer.setParsingConfig(config);
+    
+    EXPECT_NO_THROW(analyzer.loadFile(testLogFile));
+}

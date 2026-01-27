@@ -32,23 +32,42 @@ void LogAnalyzer::setCustomPatterns(std::string_view timestamp_regex, std::strin
     config_.line_pattern.clear();
 }
 
-std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(const std::filesystem::path& filepath) {
+std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
+    const std::filesystem::path& filepath,
+    ProgressCallback progress
+) {
     entries_.clear();
     LoadResult result = {0, 0};
     
     try {
-        std::ifstream file(filepath);
+        std::ifstream file(filepath, std::ios::ate | std::ios::binary);
         if (!file.is_open()) {
             return std::unexpected("Could not open file: " + filepath.string());
         }
         
+        size_t total_bytes = file.tellg();
+        file.seekg(0, std::ios::beg);
+        
         std::string line;
         size_t line_number = 0;
+        size_t bytes_processed = 0;
         
         while (std::getline(file, line)) {
             line_number++;
+            size_t line_bytes = line.size() + 1; // +1 for newline
+            bytes_processed += line_bytes;
+
+            if (progress && (line_number % 100 == 0 || bytes_processed >= total_bytes)) {
+                progress({bytes_processed, total_bytes, line_number});
+            }
+
             if (line.empty()) continue;
             
+            // Handle carriage return if present
+            if (line.back() == '\r') {
+                line.pop_back();
+            }
+
             LogEntry entry = parseLogLine(line, line_number);
             
             if (config_.strict_mode && !config_.line_pattern.empty()) {
@@ -64,6 +83,10 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(const std:
             entries_.push_back(std::move(entry));
             result.loaded_count++;
         }
+
+        if (progress) {
+            progress({bytes_processed, total_bytes, line_number});
+        }
         
     } catch (const std::exception& e) {
         return std::unexpected(e.what());
@@ -76,6 +99,29 @@ std::expected<void, std::string> LogAnalyzer::loadFile(const std::filesystem::pa
     auto result = loadFileWithStats(filepath);
     if (!result) return std::unexpected(result.error());
     return {};
+}
+
+std::future<LoadResult> LogAnalyzer::loadFileAsync(
+    std::filesystem::path filepath, 
+    ProgressCallback progress
+) {
+    return std::async(std::launch::async, [this, filepath, progress]() -> LoadResult {
+        auto result = this->loadFileWithStats(filepath, progress);
+        if (result) {
+            return *result;
+        } else {
+            // In case of error, we return a result with 0 loaded and error indication?
+            // Or maybe we should have defined LoadResult to carry error info?
+            // For now, let's assume we return empty result on error, maybe log it.
+            // Since std::future can't easily carry std::expected without changing return type.
+            // The design specified std::future<LoadResult>.
+            // We'll treat failure as 0 loaded, 0 errors (or maybe all errors?).
+            // Let's assume throwing exception is better for async if it fails completely?
+            // But the signature is LoadResult.
+            // Let's just return {0, 0} on total failure for now, or maybe throw.
+            throw std::runtime_error(result.error());
+        }
+    });
 }
 
 bool LogAnalyzer::loadLogFile(const std::string& filepath) {
@@ -151,6 +197,17 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
             if (entry.level == LogLevel::ERROR) {
                 error_counts[entry.message]++;
             }
+
+            // Thread distribution
+            if (!entry.thread_id.empty()) {
+                stats.thread_distribution[entry.thread_id]++;
+            }
+
+            // Timeline distribution (bucket by minute)
+            if (entry.time_point.time_since_epoch().count() > 0) {
+                auto minute_tp = std::chrono::time_point_cast<std::chrono::minutes>(entry.time_point);
+                stats.timeline_distribution[minute_tp]++;
+            }
         }
     } catch (const std::exception& e) {
         return std::unexpected(std::string(e.what()));
@@ -172,6 +229,10 @@ std::span<const LogEntry> LogAnalyzer::getEntriesSpan() const {
 
 const std::vector<LogEntry>& LogAnalyzer::getEntries() const {
     return entries_;
+}
+
+void LogAnalyzer::addEntry(LogEntry entry) {
+    entries_.push_back(std::move(entry));
 }
 
 LogEntry LogAnalyzer::parseLogLine(const std::string& line, size_t line_number) {
@@ -345,6 +406,21 @@ bool LogAnalyzer::matchFilter(const LogEntry& entry, const FilterOptions& option
         if (entry.time_point > options.end_tp.value()) return false;
     }
 
+    // Attribute matches
+    for (const auto& [key, value] : options.attribute_matches) {
+        auto it = entry.attributes.find(key);
+        if (it == entry.attributes.end() || it->second != value) {
+            return false;
+        }
+    }
+
+    // Tag filtering
+    for (const auto& tag : options.required_tags) {
+        if (!entry.hasTag(tag)) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -387,6 +463,17 @@ LogStatistics LogAnalyzer::getStatistics() const {
         
         if (entry.level == LogLevel::ERROR) {
             error_counts[entry.message]++;
+        }
+
+        // Thread distribution
+        if (!entry.thread_id.empty()) {
+            stats.thread_distribution[entry.thread_id]++;
+        }
+
+        // Timeline distribution (bucket by minute)
+        if (entry.time_point.time_since_epoch().count() > 0) {
+            auto minute_tp = std::chrono::time_point_cast<std::chrono::minutes>(entry.time_point);
+            stats.timeline_distribution[minute_tp]++;
         }
     }
     

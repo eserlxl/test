@@ -15,6 +15,8 @@
 #include <iostream>
 #include <functional>
 #include <generator>
+#include <future>
+#include <set>
 
 struct LogStatistics {
     size_t total_entries = 0;
@@ -30,6 +32,12 @@ struct LogStatistics {
     
     // Top errors (message, count)
     std::vector<std::pair<std::string, size_t>> top_errors;
+
+    // Distribution: count per time bucket (e.g., per minute/hour)
+    std::map<std::chrono::system_clock::time_point, size_t> timeline_distribution;
+    
+    // Count per thread
+    std::map<std::string, size_t> thread_distribution;
 };
 
 struct ParseError {
@@ -38,9 +46,16 @@ struct ParseError {
     std::string message;
 };
 
+struct ProgressInfo {
+    size_t bytes_processed = 0;
+    size_t total_bytes = 0;
+    size_t lines_processed = 0;
+};
+
+using ProgressCallback = std::function<void(const ProgressInfo&)>;
+
 struct ParsingConfig {
-    // strict_mode: If true, lines not matching the pattern are discarded/logged as errors.
-    // If false, falls back to legacy heuristic.
+    // ... existing ...
     bool strict_mode = false; 
     
     // A regex with capture groups, e.g., "^(\S+) \[(.*?)\] (.*)$"
@@ -88,6 +103,12 @@ struct FilterOptions {
     
     // New: Thread ID filter
     std::optional<std::string> thread_id;
+
+    // Attribute filtering: match if attribute exists and equals value
+    std::map<std::string, LogValue> attribute_matches;
+    
+    // Tag filtering: match if entry has all these tags
+    std::set<std::string> required_tags;
 };
 
 struct LoadResult {
@@ -110,7 +131,16 @@ public:
     std::expected<void, std::string> loadFile(const std::filesystem::path& filepath);
     
     // New: Load file with stats
-    std::expected<LoadResult, std::string> loadFileWithStats(const std::filesystem::path& filepath);
+    std::expected<LoadResult, std::string> loadFileWithStats(
+        const std::filesystem::path& filepath,
+        ProgressCallback progress = nullptr
+    );
+
+    // New: Async load with optional progress callback
+    std::future<LoadResult> loadFileAsync(
+        std::filesystem::path filepath, 
+        ProgressCallback progress = nullptr
+    );
 
     // Legacy Loading (Keep for compatibility, implemented via loadFile)
     bool loadLogFile(const std::string& filepath);
@@ -132,6 +162,9 @@ public:
     // Accessors
     std::span<const LogEntry> getEntriesSpan() const;
     [[nodiscard]] const std::vector<LogEntry>& getEntries() const; // Legacy
+
+    // Testing Support
+    void addEntry(LogEntry entry);
 
     // Analysis
     void analyze(); // Legacy, triggers stats calculation if needed
