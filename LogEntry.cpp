@@ -116,7 +116,7 @@ bool LogEntry::parseTime() {
     std::istringstream ss(timestamp);
     std::tm tm = {};
     // Format: 2023-10-27 10:00:00.000
-    char dash1, dash2, space, colon1, colon2;
+    char dash1, dash2, colon1, colon2;
     int year, month, day, hour, min, sec;
     
     if (!(ss >> year >> dash1 >> month >> dash2 >> day >> hour >> colon1 >> min >> colon2 >> sec)) {
@@ -259,27 +259,27 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
     std::string nl = options.pretty ? "\n" : "";
     
     oss << "{" << nl;
-    oss << indent << "\"timestamp\":\"" << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp) << "\"," << nl;
-    oss << indent << "\"level\":\"" << levelToString(level) << "\"," << nl;
-    oss << indent << "\"message\":\"" << escapeJson(message) << "\"";
+    oss << indent << "\"timestamp\": \"" << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp) << "\"," << nl;
+    oss << indent << "\"level\": \"" << levelToString(level) << "\"," << nl;
+    oss << indent << "\"message\": \"" << escapeJson(message) << "\"";
 
     if (options.include_source && !source_file.empty()) {
-        oss << "," << nl << indent << "\"source\":{" << nl;
-        oss << indent << indent << "\"file\":\"" << escapeJson(source_file) << "\"," << nl;
-        oss << indent << indent << "\"function\":\"" << escapeJson(source_function) << "\"," << nl;
-        oss << indent << indent << "\"line\":" << source_line << nl;
+        oss << "," << nl << indent << "\"source\": {" << nl;
+        oss << indent << indent << "\"file\": \"" << escapeJson(source_file) << "\"," << nl;
+        oss << indent << indent << "\"function\": \"" << escapeJson(source_function) << "\"," << nl;
+        oss << indent << indent << "\"line\": " << source_line << nl;
         oss << indent << "}";
     }
 
     if (options.include_thread && !thread_id.empty()) {
-        oss << "," << nl << indent << "\"thread_id\":\"" << escapeJson(thread_id) << "\"";
+        oss << "," << nl << indent << "\"thread_id\": \"" << escapeJson(thread_id) << "\"";
     }
 
     if (!tags.empty()) {
-        oss << "," << nl << indent << "\"tags\":[";
+        oss << "," << nl << indent << "\"tags\": [";
         bool first = true;
         for (const auto& tag : tags) {
-            if (!first) oss << ",";
+            if (!first) oss << ", ";
             oss << "\"" << escapeJson(tag) << "\"";
             first = false;
         }
@@ -287,11 +287,11 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
     }
 
     if (!attributes.empty()) {
-        oss << "," << nl << indent << "\"attributes\":{" << nl;
+        oss << "," << nl << indent << "\"attributes\": {" << nl;
         bool first = true;
         for (const auto& [key, value] : attributes) {
             if (!first) oss << "," << nl;
-            oss << indent << indent << "\"" << escapeJson(key) << "\":";
+            oss << indent << indent << "\"" << escapeJson(key) << "\": ";
             
             std::visit([&oss](auto&& arg) {
                 using T = std::decay_t<decltype(arg)>;

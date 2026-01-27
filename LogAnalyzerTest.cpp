@@ -542,8 +542,8 @@ TEST_F(LogAnalyzerTest, LogEntryExtraTest) {
     
     // Check JSON output
     std::string json = entry.toJson();
-    EXPECT_NE(json.find("\"message\":\"Test Error\""), std::string::npos);
-    EXPECT_NE(json.find("\"exception_message\":\"Failure\""), std::string::npos);
+    EXPECT_NE(json.find("\"message\": \"Test Error\""), std::string::npos);
+    EXPECT_NE(json.find("\"exception_message\": \"Failure\""), std::string::npos);
 }
 
 // --- Suite 11: ResilienceTests ---

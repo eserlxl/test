@@ -30,6 +30,12 @@ enum class LogLevel {
 // Supported types for structured data
 using LogValue = std::variant<std::string, int64_t, uint64_t, double, bool>;
 
+struct LogEntryJsonOptions {
+    bool pretty = false;
+    bool include_source = true;
+    bool include_thread = true;
+};
+
 struct LogEntry {
     // Existing fields (Public API Compat)
     std::string timestamp;
@@ -96,16 +102,12 @@ struct LogEntry {
 
     bool hasTag(std::string_view tag) const;
 
-    struct JsonOptions {
-        bool pretty = false;
-        bool include_source = true;
-        bool include_thread = true;
-    };
-    std::string toJson(const JsonOptions& options = JsonOptions{}) const;
-
     // Comparison (C++20)
     std::strong_ordering operator<=>(const LogEntry& other) const;
     bool operator==(const LogEntry& other) const;
+
+    using JsonOptions = LogEntryJsonOptions;
+    std::string toJson(const JsonOptions& options = {}) const;
 
     // Stream Support
     friend std::ostream& operator<<(std::ostream& os, const LogEntry& entry);

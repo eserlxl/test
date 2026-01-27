@@ -331,12 +331,14 @@ LogEntry LogAnalyzer::parseLogLine(const std::string& line, size_t line_number) 
 }
 
 bool LogAnalyzer::matchFilter(const LogEntry& entry, const FilterOptions& options) const {
+    bool match = true;
+    
     // Level filter
     if (options.level.has_value()) {
-        if (entry.level < options.level.value()) return false;
+        if (entry.level < options.level.value()) match = false;
     }
     
-    if (!options.levels.empty()) {
+    if (match && !options.levels.empty()) {
         bool found = false;
         for (auto l : options.levels) {
             if (entry.level == l) {
@@ -344,24 +346,24 @@ bool LogAnalyzer::matchFilter(const LogEntry& entry, const FilterOptions& option
                 break;
             }
         }
-        if (!found) return false;
+        if (!found) match = false;
     }
 
     // Source file filter
-    if (options.source_file.has_value()) {
-        if (entry.source_file != options.source_file.value()) return false;
+    if (match && options.source_file.has_value()) {
+        if (entry.source_file != options.source_file.value()) match = false;
     }
     
     // Thread ID filter
-    if (options.thread_id.has_value()) {
-        if (entry.thread_id != options.thread_id.value()) return false;
+    if (match && options.thread_id.has_value()) {
+        if (entry.thread_id != options.thread_id.value()) match = false;
     }
 
     // Keyword filter
-    if (options.keyword.has_value()) {
-        bool match = false;
+    if (match && options.keyword.has_value()) {
+        bool keyword_found = false;
         if (options.case_sensitive) {
-            match = (entry.message.find(options.keyword.value()) != std::string::npos);
+            keyword_found = (entry.message.find(options.keyword.value()) != std::string::npos);
         } else {
             // Case insensitive
             auto it = std::search(
@@ -372,56 +374,59 @@ bool LogAnalyzer::matchFilter(const LogEntry& entry, const FilterOptions& option
                            std::toupper(static_cast<unsigned char>(ch2)); 
                 }
             );
-            match = (it != entry.message.end());
+            keyword_found = (it != entry.message.end());
         }
-        
-        if (options.invert_match ? match : !match) return false;
+        if (!keyword_found) match = false;
     }
 
     // Regex Message filter
-    if (options.message_regex_pattern.has_value()) {
+    if (match && options.message_regex_pattern.has_value()) {
         try {
             std::regex msg_regex(options.message_regex_pattern.value());
-            bool match = std::regex_search(entry.message, msg_regex);
-            if (options.invert_match ? match : !match) return false;
+            if (!std::regex_search(entry.message, msg_regex)) match = false;
         } catch (...) {
-            // Invalid regex, treat as no match (or maybe should throw/log?)
-            return false;
+            match = false;
         }
     }
 
     // Start time filter
-    if (options.start_time.has_value()) {
-         if (entry.timestamp < options.start_time.value()) return false;
+    if (match && options.start_time.has_value()) {
+         if (entry.timestamp < options.start_time.value()) match = false;
     }
-    if (options.start_tp.has_value()) {
-        if (entry.time_point < options.start_tp.value()) return false;
+    if (match && options.start_tp.has_value()) {
+        if (entry.time_point < options.start_tp.value()) match = false;
     }
 
     // End time filter
-    if (options.end_time.has_value()) {
-        if (entry.timestamp > options.end_time.value()) return false;
+    if (match && options.end_time.has_value()) {
+        if (entry.timestamp > options.end_time.value()) match = false;
     }
-    if (options.end_tp.has_value()) {
-        if (entry.time_point > options.end_tp.value()) return false;
+    if (match && options.end_tp.has_value()) {
+        if (entry.time_point > options.end_tp.value()) match = false;
     }
 
     // Attribute matches
-    for (const auto& [key, value] : options.attribute_matches) {
-        auto it = entry.attributes.find(key);
-        if (it == entry.attributes.end() || it->second != value) {
-            return false;
+    if (match) {
+        for (const auto& [key, value] : options.attribute_matches) {
+            auto it = entry.attributes.find(key);
+            if (it == entry.attributes.end() || it->second != value) {
+                match = false;
+                break;
+            }
         }
     }
 
     // Tag filtering
-    for (const auto& tag : options.required_tags) {
-        if (!entry.hasTag(tag)) {
-            return false;
+    if (match) {
+        for (const auto& tag : options.required_tags) {
+            if (!entry.hasTag(tag)) {
+                match = false;
+                break;
+            }
         }
     }
 
-    return true;
+    return options.invert_match ? !match : match;
 }
 
 void LogAnalyzer::analyze() {
