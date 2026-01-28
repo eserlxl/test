@@ -17,15 +17,25 @@
 #include <optional>
 #include <functional>
 #include <initializer_list>
+#include <expected>
 
 enum class LogLevel {
-    DEBUG,
-    INFO,
-    WARNING,
-    ERROR,
-    CRITICAL,
-    UNKNOWN
+    DEBUG = 0,
+    INFO = 1,
+    WARNING = 2,
+    ERROR = 3,
+    CRITICAL = 4,
+    UNKNOWN = 5
 };
+
+inline bool isAtLeast(LogLevel level, LogLevel minimum) noexcept {
+    if (level == LogLevel::UNKNOWN || minimum == LogLevel::UNKNOWN) return false;
+    return static_cast<int>(level) >= static_cast<int>(minimum);
+}
+
+inline bool isError(LogLevel level) noexcept {
+    return level == LogLevel::ERROR || level == LogLevel::CRITICAL;
+}
 
 // Supported types for structured data
 using LogValue = std::variant<std::string, int64_t, uint64_t, double, bool>;
@@ -34,6 +44,7 @@ struct LogEntryJsonOptions {
     bool pretty = false;
     bool include_source = true;
     bool include_thread = true;
+    bool include_tracing = true;
 };
 
 struct LogEntry {
@@ -52,6 +63,10 @@ struct LogEntry {
     int source_line = 0;
     std::string thread_id;
 
+    // Tracing context
+    std::string trace_id;
+    std::string span_id;
+
     // Structured data
     // BREAKING CHANGE: attributes now stores variants
     std::map<std::string, LogValue> attributes;
@@ -67,6 +82,9 @@ struct LogEntry {
     // Factory method
     static LogEntry create(LogLevel level, std::string_view message, 
                           std::source_location loc = std::source_location::current());
+    
+    // JSON Deserialization
+    static std::expected<LogEntry, std::string> fromJson(std::string_view json_str);
 
     // Fluent API
     LogEntry& withLevel(LogLevel l);
@@ -79,6 +97,9 @@ struct LogEntry {
     LogEntry& withTag(std::string_view tag);
     LogEntry& withTags(std::initializer_list<std::string_view> tags);
     LogEntry& withException(const std::exception& e);
+    LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
+
+    LogEntry clonedWithTag(std::string_view tag) const;
 
     // Methods
     bool parseTime();

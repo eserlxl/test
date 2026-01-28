@@ -207,18 +207,250 @@ void testStreamOperator() {
     oss << entry;
     assert(oss.str() == "[2023-10-27 10:00:00] [ERROR] Stream test");
     
-    std::cout << "testStreamOperator passed" << std::endl;
-}
-
-int main() {
-    testLevelParsing();
-    testLevelToString();
-    testTimeParsing();
-    testComparison();
-    testFormatting();
-    testStructuredLogging();
-    testFluentApi();
-    testStreamOperator();
-    std::cout << "All LogEntry tests passed!" << std::endl;
-    return 0;
-}
+        std::cout << "testStreamOperator passed" << std::endl;
+    
+    }
+    
+    
+    
+    void testSeverityChecks() {
+    
+        assert(isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
+    
+        assert(isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
+    
+        assert(!isAtLeast(LogLevel::INFO, LogLevel::WARNING));
+    
+        
+    
+        assert(isError(LogLevel::ERROR));
+    
+        assert(isError(LogLevel::CRITICAL));
+    
+        assert(!isError(LogLevel::WARNING));
+    
+        assert(!isError(LogLevel::INFO));
+    
+        
+    
+        std::cout << "testSeverityChecks passed" << std::endl;
+    
+    }
+    
+    
+    
+    void testTracing() {
+    
+        LogEntry entry = LogEntry::create(LogLevel::INFO, "Tracing test")
+    
+            .withTraceContext("trace-123", "span-456");
+    
+            
+    
+        assert(entry.trace_id == "trace-123");
+    
+        assert(entry.span_id == "span-456");
+    
+        
+    
+        std::string json = entry.toJson();
+    
+        assert(json.find("\"trace_id\": \"trace-123\"") != std::string::npos);
+    
+        assert(json.find("\"span_id\": \"span-456\"") != std::string::npos);
+    
+        
+    
+        // Test comparison with tracing
+    
+        LogEntry e2 = entry;
+    
+        e2.trace_id = "trace-124";
+    
+        assert(entry < e2);
+    
+        
+    
+        std::cout << "testTracing passed" << std::endl;
+    
+    }
+    
+    
+    
+    void testJsonDeserialization() {
+    
+        std::string json = R"({
+    
+            "timestamp": "2023-10-27 10:00:00.123",
+    
+            "level": "ERROR",
+    
+            "message": "Test deserialization",
+    
+            "thread_id": "thread-1",
+    
+            "trace_id": "trace-abc",
+    
+            "span_id": "span-def",
+    
+            "tags": ["tag1", "tag2"],
+    
+            "attributes": {
+    
+                "key1": "value1",
+    
+                "key2": 123,
+    
+                "key3": true,
+    
+                "key4": 123.456
+    
+            },
+    
+            "source": {
+    
+                "file": "test.cpp",
+    
+                "function": "main",
+    
+                "line": 100
+    
+            }
+    
+        })";
+    
+    
+    
+        auto result = LogEntry::fromJson(json);
+    
+        if (!result) {
+    
+            std::cout << "JSON parsing failed: " << result.error() << std::endl;
+    
+        }
+    
+        assert(result.has_value());
+    
+        
+    
+        const LogEntry& entry = *result;
+    
+        assert(entry.level == LogLevel::ERROR);
+    
+        assert(entry.message == "Test deserialization");
+    
+        assert(entry.timestamp == "2023-10-27 10:00:00.123");
+    
+        assert(entry.thread_id == "thread-1");
+    
+        assert(entry.trace_id == "trace-abc");
+    
+        assert(entry.span_id == "span-def");
+    
+        
+    
+        assert(entry.hasTag("tag1"));
+    
+        assert(entry.hasTag("tag2"));
+    
+        
+    
+        assert(entry.getAttributeAsString("key1") == "value1");
+    
+        assert(std::get<int64_t>(entry.attributes.at("key2")) == 123);
+    
+        assert(std::get<bool>(entry.attributes.at("key3")) == true);
+    
+        // Double comparison
+    
+        assert(std::abs(std::get<double>(entry.attributes.at("key4")) - 123.456) < 0.0001);
+    
+        
+    
+        assert(entry.source_file == "test.cpp");
+    
+        assert(entry.source_function == "main");
+    
+        assert(entry.source_line == 100);
+    
+    
+    
+        // Test Round Trip
+    
+        std::string serialized = entry.toJson();
+    
+        auto deserialized = LogEntry::fromJson(serialized);
+    
+        assert(deserialized.has_value());
+    
+        assert(deserialized->message == entry.message);
+    
+        assert(deserialized->tags == entry.tags);
+    
+        // Note: attributes might have slightly different string representations for doubles if not carefully handled, but basic types should match.
+    
+        
+    
+        std::cout << "testJsonDeserialization passed" << std::endl;
+    
+    }
+    
+    
+    
+    void testCloning() {
+    
+        LogEntry entry = LogEntry::create(LogLevel::INFO, "Original");
+    
+        entry.withTag("original_tag");
+    
+        
+    
+        LogEntry clone = entry.clonedWithTag("new_tag");
+    
+        assert(clone.hasTag("original_tag"));
+    
+        assert(clone.hasTag("new_tag"));
+    
+        assert(!entry.hasTag("new_tag")); // Original should be unmodified
+    
+        
+    
+        std::cout << "testCloning passed" << std::endl;
+    
+    }
+    
+    
+    
+    int main() {
+    
+        testLevelParsing();
+    
+        testLevelToString();
+    
+        testTimeParsing();
+    
+        testComparison();
+    
+        testFormatting();
+    
+        testStructuredLogging();
+    
+        testFluentApi();
+    
+        testStreamOperator();
+    
+        testSeverityChecks();
+    
+        testTracing();
+    
+        testJsonDeserialization();
+    
+        testCloning();
+    
+        std::cout << "All LogEntry tests passed!" << std::endl;
+    
+        return 0;
+    
+    }
+    
+    
