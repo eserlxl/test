@@ -559,3 +559,122 @@ TEST_F(LogAnalyzerTest, ResilienceTests) {
     
     EXPECT_NO_THROW(analyzer.loadFile(testLogFile));
 }
+// --- Iteration 1 Tests ---
+
+TEST_F(LogAnalyzerTest, LogPredicateDSL) {
+    LogAnalyzer analyzer;
+    analyzer.loadFile(testLogFile);
+    
+    // (Level >= ERROR) OR (Keyword == "System")
+    auto p = Filters::Or(
+        Filters::Level(LogLevel::ERROR),
+        Filters::Keyword("System", true)
+    );
+    
+    // ERROR: "Connection failed"
+    // CRITICAL: "System crash imminent" (Also has keyword "System")
+    // INFO: "System started" (Keyword "System")
+    
+    auto filtered = analyzer.getFilteredEntries(*p);
+    EXPECT_EQ(filtered.size(), 3);
+}
+
+TEST_F(LogAnalyzerTest, EnrichmentTest) {
+    LogAnalyzer analyzer;
+    analyzer.addEnricher([](LogEntry& e) {
+        if (e.level == LogLevel::ERROR) {
+            e.withAttribute("enriched", true);
+        }
+    });
+    
+    analyzer.loadFile(testLogFile);
+    
+    auto errors = analyzer.getFilteredEntries(*Filters::Level(LogLevel::ERROR));
+    ASSERT_EQ(errors.size(), 1); // Only ERROR level, not CRITICAL
+    EXPECT_TRUE(errors[0].hasAttribute("enriched"));
+    
+    auto info = analyzer.getFilteredEntries(*Filters::Level(LogLevel::INFO));
+    ASSERT_EQ(info.size(), 1);
+    EXPECT_FALSE(info[0].hasAttribute("enriched"));
+}
+
+TEST_F(LogAnalyzerTest, MultiLineParsing) {
+    fs::path multiLineFile = tempDir / "multiline.log";
+    {
+        std::ofstream f(multiLineFile);
+        f << "2023-10-27 10:00:00 [ERROR] Error occurred\n";
+        f << "  at FunctionA (file.cpp:10)\n";
+        f << "  at FunctionB (file.cpp:20)\n";
+        f << "2023-10-27 10:00:01 [INFO] Done\n";
+    }
+    
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.entry_start_pattern = R"(^\d{4}-\d{2}-\d{2})";
+    analyzer.setParsingConfig(config);
+    
+    analyzer.loadFile(multiLineFile);
+    auto entries = analyzer.getEntries();
+    
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_EQ(entries[0].level, LogLevel::ERROR);
+    EXPECT_TRUE(entries[0].message.find("at FunctionA") != std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("at FunctionB") != std::string::npos);
+    EXPECT_EQ(entries[1].level, LogLevel::INFO);
+}
+
+TEST_F(LogAnalyzerTest, NamedCaptureGroups) {
+    fs::path customFile = tempDir / "named_groups.log";
+    {
+        std::ofstream f(customFile);
+        f << "INFO | 2023-10-27 10:00:00 | User logged in\n";
+    }
+    
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.strict_mode = true;
+    config.line_pattern = R"((?<level>\w+) \| (?<timestamp>.*?) \| (?<message>.*))";
+    config.field_mapping = {
+        {"level", "level"},
+        {"timestamp", "timestamp"},
+        {"message", "message"}
+    };
+    
+    analyzer.setParsingConfig(config);
+    analyzer.loadFile(customFile);
+    
+    auto entries = analyzer.getEntries();
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].level, LogLevel::INFO);
+    EXPECT_EQ(entries[0].timestamp, "2023-10-27 10:00:00");
+    EXPECT_EQ(entries[0].message, "User logged in");
+}
+
+TEST_F(LogAnalyzerTest, ParallelLoading) {
+    // Create a large-ish file
+    fs::path largeFile = tempDir / "large.log";
+    {
+        std::ofstream f(largeFile);
+        for(int i=0; i<1000; ++i) {
+            f << "2023-10-27 10:00:00 [INFO] Line " << i << "\n";
+        }
+    }
+    
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.line_pattern = R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] (.*)$)";
+    config.timestamp_index = 1;
+    config.level_index = 2;
+    config.message_index = 3;
+    analyzer.setParsingConfig(config);
+    
+    ParallelConfig pConfig;
+    pConfig.thread_count = 4;
+    pConfig.chunk_size_mb = 1; // Small chunk size to force multiple chunks
+    
+    auto future = analyzer.loadParallel(largeFile, pConfig);
+    auto result = future.get();
+    
+    EXPECT_EQ(result.loaded_count, 1000);
+    EXPECT_EQ(analyzer.getEntries().size(), 1000);
+}
