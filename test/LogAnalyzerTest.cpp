@@ -1,5 +1,5 @@
-#include "LogAnalyzer.h"
-#include "LogEntry.h"
+#include <gemini/LogAnalyzer.h>
+#include <gemini/LogEntry.h>
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <fstream>
@@ -641,12 +641,12 @@ TEST_F(LogAnalyzerTest, AttributeRangeFilter) {
 TEST_F(LogAnalyzerTest, SinceFilter) {
     LogAnalyzer analyzer;
     // This test is inherently brittle because `Filters::Since` uses `std::chrono::system_clock::now()`.
-    // To make it robust, `SincePredicate` should accept a reference time, but the design specified it uses 'now'.
-    // We will test it with a very large duration, expecting all entries from the test file to be captured.
+    // We will test it with a very large duration (200,000 hours ~ 22 years) to ensure 
+    // the 2023 timestamps are captured regardless of the current date (up to ~2045).
     analyzer.loadFile(testLogFile);
-    auto pred_since_24h = Filters::Since(std::chrono::hours(24));
-    auto filtered_since = analyzer.getFilteredEntries(*pred_since_24h);
-    EXPECT_EQ(filtered_since.size(), 5); // All entries should be within last 24h
+    auto pred_since = Filters::Since(std::chrono::hours(200000));
+    auto filtered_since = analyzer.getFilteredEntries(*pred_since);
+    EXPECT_EQ(filtered_since.size(), 5); 
 }
 
 TEST_F(LogAnalyzerTest, AnyKeywordFilter) {
@@ -818,4 +818,201 @@ TEST_F(LogAnalyzerTest, ConsoleExporterWithColor) {
     // Check for ANSI color codes
     EXPECT_NE(output_entries.find("\033[32m[   INFO]\033[0m"), std::string::npos); // Green for INFO
     EXPECT_NE(output_entries.find("\033[31m[  ERROR]\033[0m"), std::string::npos); // Red for ERROR
+}
+
+// --- Suite 12: ParallelLoadingTest ---
+
+TEST_F(LogAnalyzerTest, LoadSmallFileParallel) {
+    LogAnalyzer analyzer;
+    auto future = analyzer.loadParallel(testLogFile);
+    auto result = future.get();
+    EXPECT_EQ(result.loaded_count, 5);
+    EXPECT_EQ(analyzer.getEntries().size(), 5);
+}
+
+TEST_F(LogAnalyzerTest, LoadLargeFileParallel) {
+    fs::path largeFile = tempDir / "large.log";
+    {
+        std::ofstream f(largeFile);
+        for (int i = 0; i < 1000; ++i) {
+            f << "2023-10-27 10:00:00 [INFO] Message " << i << "\n";
+        }
+    }
+    
+    LogAnalyzer analyzer;
+    ParallelConfig config;
+    config.chunk_size_mb = 1; 
+    config.thread_count = 2;
+    
+    auto future = analyzer.loadParallel(largeFile, config);
+    auto result = future.get();
+    
+    EXPECT_EQ(result.loaded_count, 1000);
+    EXPECT_EQ(analyzer.getEntries().size(), 1000);
+}
+
+TEST_F(LogAnalyzerTest, ParallelLoadCorrectness) {
+    LogAnalyzer serialAnalyzer;
+    serialAnalyzer.loadFile(testLogFile);
+    
+    LogAnalyzer parallelAnalyzer;
+    parallelAnalyzer.loadParallel(testLogFile).get();
+    
+    ASSERT_EQ(serialAnalyzer.getEntries().size(), parallelAnalyzer.getEntries().size());
+    for (size_t i = 0; i < serialAnalyzer.getEntries().size(); ++i) {
+        EXPECT_EQ(serialAnalyzer.getEntries()[i].message, parallelAnalyzer.getEntries()[i].message);
+        EXPECT_EQ(serialAnalyzer.getEntries()[i].level, parallelAnalyzer.getEntries()[i].level);
+    }
+}
+
+// --- Suite 13: MultiLineLogTest ---
+
+TEST_F(LogAnalyzerTest, BasicMultiLine) {
+    fs::path multiLineFile = tempDir / "multiline.log";
+    {
+        std::ofstream f(multiLineFile);
+        f << "2023-10-27 10:00:00 [INFO] Start\n";
+        f << "  Continuation 1\n";
+        f << "  Continuation 2\n";
+        f << "2023-10-27 10:00:05 [ERROR] Failure\n";
+        f << "\tat stack trace line 1\n";
+    }
+
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.line_pattern = R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] (.*)$)";
+    config.timestamp_index = 1;
+    config.level_index = 2;
+    config.message_index = 3;
+    config.entry_start_pattern = R"(^\d{4}-\d{2}-\d{2})";
+    
+    analyzer.setParsingConfig(config);
+    auto result = analyzer.loadFile(multiLineFile);
+    ASSERT_TRUE(result.has_value());
+    
+    const auto& entries = analyzer.getEntries();
+    ASSERT_EQ(entries.size(), 2);
+    
+    EXPECT_EQ(entries[0].message, "Start\n  Continuation 1\n  Continuation 2");
+    EXPECT_EQ(entries[1].message, "Failure\n\tat stack trace line 1");
+}
+
+TEST_F(LogAnalyzerTest, MaxContinuationLimit) {
+    fs::path longEntryFile = tempDir / "long_entry.log";
+    {
+        std::ofstream f(longEntryFile);
+        f << "2023-10-27 10:00:00 [INFO] Start\n";
+        for (int i = 0; i < 10; ++i) {
+            f << "  Line " << i << "\n";
+        }
+    }
+
+    LogAnalyzer analyzer;
+    ParsingConfig config;
+    config.line_pattern = R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] (.*)$)";
+    config.timestamp_index = 1;
+    config.level_index = 2;
+    config.message_index = 3;
+    config.entry_start_pattern = R"(^\d{4}-\d{2}-\d{2})";
+    config.max_continuation_lines = 5;
+    
+    analyzer.setParsingConfig(config);
+    analyzer.loadFile(longEntryFile);
+    
+    const auto& entries = analyzer.getEntries();
+    
+    // We expect the first entry to have "Start" + 5 lines (Line 0-4).
+    // The next entry will start with "Line 5".
+    // Since "Line 5" doesn't match the start pattern, but we forced a split, 
+    // it will be parsed. However, since it doesn't match the regex (no timestamp), 
+    // it will be treated as an entry with empty timestamp/level if strict mode is off.
+    
+    ASSERT_GE(entries.size(), 2);
+    
+    // First entry should have 5 newlines (Start + 5 lines)
+    size_t newlines = std::count(entries[0].message.begin(), entries[0].message.end(), '\n');
+    EXPECT_EQ(newlines, 5);
+    
+    // Check content
+    EXPECT_NE(entries[0].message.find("Line 4"), std::string::npos);
+    EXPECT_EQ(entries[0].message.find("Line 5"), std::string::npos);
+    
+    // The second entry starts with "Line 5"
+    EXPECT_NE(entries[1].message.find("Line 5"), std::string::npos);
+}
+
+// --- Suite 14: AdvancedParsingTest ---
+
+TEST_F(LogAnalyzerTest, NamedCaptureGroupsIntegration) {
+    fs::path namedFile = tempDir / "named.log";
+    {
+        std::ofstream f(namedFile);
+        f << "2023-10-27 10:00:00 [INFO] [thread-1] Message\n";
+    }
+
+    LogAnalyzer analyzer;
+    // Pattern with named groups
+    std::string pattern = R"(^(?<timestamp>\S+ \S+) \[(?<level>\w+)\] \[(?<thread_id>.*?)\] (?<message>.*)$)";
+    ParsingConfig config = ParsingConfig::fromRegex(pattern);
+    config.strict_mode = true;
+    
+    analyzer.setParsingConfig(config);
+    auto result = analyzer.loadFile(namedFile);
+    ASSERT_TRUE(result.has_value());
+    
+    const auto& entries = analyzer.getEntries();
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].timestamp, "2023-10-27 10:00:00");
+    EXPECT_EQ(entries[0].level, LogLevel::INFO);
+    EXPECT_EQ(entries[0].thread_id, "thread-1");
+    EXPECT_EQ(entries[0].message, "Message");
+}
+
+// --- Suite 15: ExporterTest ---
+
+TEST_F(LogAnalyzerTest, CsvExportFormat) {
+    LogAnalyzer analyzer;
+    analyzer.loadFile(testLogFile);
+    
+    std::stringstream ss;
+    CsvExporter exporter(ss);
+    exporter.exportEntries(analyzer.getEntriesSpan());
+    
+    std::string output = ss.str();
+    EXPECT_NE(output.find("Timestamp,Level,Message,ThreadId"), std::string::npos);
+    EXPECT_NE(output.find("\"2023-10-27 10:00:00\",\"INFO\",\"System started\""), std::string::npos);
+}
+
+// --- Suite 16: SerializationTest ---
+
+TEST_F(LogAnalyzerTest, LogEntryJsonRoundTrip) {
+    LogEntry entry = LogEntry::create(LogLevel::ERROR, "Test Message")
+        .withAttribute("count", int64_t(42))
+        .withTag("test");
+    
+    std::string json = entry.toJson();
+    auto result = LogEntry::fromJson(json);
+    
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->level, entry.level);
+    EXPECT_EQ(result->message, entry.message);
+    EXPECT_EQ(result->getAttributeAs<int64_t>("count"), 42);
+    EXPECT_TRUE(result->hasTag("test"));
+}
+
+// --- Suite 17: PredicateCompositionTest ---
+
+TEST_F(LogAnalyzerTest, PredicateComposition) {
+    LogEntry e1 = LogEntry().withLevel(LogLevel::INFO).withMessage("Apple");
+    LogEntry e2 = LogEntry().withLevel(LogLevel::ERROR).withMessage("Banana");
+    LogEntry e3 = LogEntry().withLevel(LogLevel::INFO).withMessage("Cherry");
+
+    auto pred = Filters::And(
+        Filters::Level(LogLevel::INFO),
+        Filters::Not(Filters::Keyword("Apple"))
+    );
+
+    EXPECT_FALSE(pred->test(e1));
+    EXPECT_FALSE(pred->test(e2));
+    EXPECT_TRUE(pred->test(e3));
 }

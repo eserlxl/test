@@ -557,12 +557,17 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
                 process_buffer();
                 current_entry_buffer = line;
                 entry_line_start = line_number;
-            } else {
-                if (!current_entry_buffer.empty()) {
-                    current_entry_buffer += "\n" + line;
-                } else {
+            } else { // Not a new entry
+                // Apply max_continuation_lines limit
+                if (current_entry_buffer.empty() || 
+                    (config_.max_continuation_lines > 0 && 
+                     static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= config_.max_continuation_lines)) {
+                    // If buffer is empty or limit reached, treat current line as start of a new entry
+                    process_buffer(); // Process the accumulated buffer as a full entry
                     current_entry_buffer = line;
                     entry_line_start = line_number;
+                } else {
+                    current_entry_buffer += "\n" + line;
                 }
             }
 
