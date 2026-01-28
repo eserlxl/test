@@ -1,4 +1,4 @@
-#include "LogAnalyzer.h"
+#include <gemini/LogAnalyzer.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -9,6 +9,31 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+
+// --- ParsingConfig Implementation ---
+
+bool ParsingConfig::validate() const {
+    if (line_pattern.empty()) return false;
+    try {
+        std::regex r(line_pattern);
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+ParsingConfig ParsingConfig::fromRegex(std::string pattern) {
+    ParsingConfig config;
+    config.line_pattern = pattern;
+    // Simple heuristic to map common names from named groups if present in the pattern string
+    if (pattern.find("?<timestamp>") != std::string::npos) config.field_mapping["timestamp"] = "timestamp";
+    if (pattern.find("?<level>") != std::string::npos) config.field_mapping["level"] = "level";
+    if (pattern.find("?<message>") != std::string::npos) config.field_mapping["message"] = "message";
+    if (pattern.find("?<thread_id>") != std::string::npos) config.field_mapping["thread_id"] = "thread_id";
+    if (pattern.find("?<file>") != std::string::npos) config.field_mapping["file"] = "file";
+    if (pattern.find("?<line>") != std::string::npos) config.field_mapping["line"] = "line";
+    return config;
+}
 
 // --- Filters Implementation ---
 
@@ -65,6 +90,83 @@ namespace Filters {
             return it != entry.attributes.end() && it->second == value_;
         }
         std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AttributePredicate>(key_, value_); }
+    };
+
+    class AttributeRangePredicate : public LogPredicate {
+        std::string key_;
+        LogValue min_, max_;
+    public:
+        AttributeRangePredicate(std::string k, LogValue min, LogValue max) 
+            : key_(std::move(k)), min_(std::move(min)), max_(std::move(max)) {}
+        
+        bool test(const LogEntry& entry) const override {
+            auto it = entry.attributes.find(key_);
+            if (it == entry.attributes.end()) return false;
+            
+            const auto& val = it->second;
+            
+            if (val.index() == min_.index() && val.index() == max_.index()) {
+                return val >= min_ && val <= max_;
+            }
+            
+            auto to_double = [](const LogValue& v) -> std::optional<double> {
+                return std::visit([](auto&& arg) -> std::optional<double> {
+                    using T = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_arithmetic_v<T>) return static_cast<double>(arg);
+                    else return std::nullopt;
+                }, v);
+            };
+            
+            auto v_d = to_double(val);
+            auto min_d = to_double(min_);
+            auto max_d = to_double(max_);
+            
+            if (v_d && min_d && max_d) {
+                return *v_d >= *min_d && *v_d <= *max_d;
+            }
+            return false;
+        }
+        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AttributeRangePredicate>(key_, min_, max_); }
+    };
+
+    class SincePredicate : public LogPredicate {
+        std::chrono::system_clock::duration duration_;
+        mutable std::optional<std::chrono::system_clock::time_point> reference_time_;
+    public:
+        explicit SincePredicate(std::chrono::system_clock::duration d) : duration_(d) {}
+        bool test(const LogEntry& entry) const override {
+            if (!reference_time_) {
+                reference_time_ = std::chrono::system_clock::now();
+            }
+            return entry.time_point >= (*reference_time_ - duration_);
+        }
+        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<SincePredicate>(duration_); }
+    };
+
+    class AnyKeywordPredicate : public LogPredicate {
+        std::vector<std::string> keywords_;
+        bool case_sensitive_;
+    public:
+        AnyKeywordPredicate(std::vector<std::string> kw, bool cs) : keywords_(std::move(kw)), case_sensitive_(cs) {}
+        bool test(const LogEntry& entry) const override {
+            for (const auto& kw : keywords_) {
+                if (case_sensitive_) {
+                    if (entry.message.find(kw) != std::string::npos) return true;
+                } else {
+                    auto it = std::search(
+                        entry.message.begin(), entry.message.end(),
+                        kw.begin(), kw.end(),
+                        [](char ch1, char ch2) { 
+                            return std::toupper(static_cast<unsigned char>(ch1)) == 
+                                   std::toupper(static_cast<unsigned char>(ch2)); 
+                        }
+                    );
+                    if (it != entry.message.end()) return true;
+                }
+            }
+            return false;
+        }
+        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AnyKeywordPredicate>(keywords_, case_sensitive_); }
     };
 
     class AndPredicate : public LogPredicate {
@@ -165,6 +267,18 @@ namespace Filters {
     std::unique_ptr<LogPredicate> Attribute(std::string key, LogValue val) { 
         return std::make_unique<AttributePredicate>(std::move(key), std::move(val)); 
     }
+
+    std::unique_ptr<LogPredicate> AttributeRange(std::string key, LogValue min, LogValue max) {
+        return std::make_unique<AttributeRangePredicate>(std::move(key), std::move(min), std::move(max));
+    }
+
+    std::unique_ptr<LogPredicate> Since(std::chrono::system_clock::duration d) {
+        return std::make_unique<SincePredicate>(d);
+    }
+
+    std::unique_ptr<LogPredicate> AnyKeyword(std::vector<std::string> keywords, bool case_sensitive) {
+        return std::make_unique<AnyKeywordPredicate>(std::move(keywords), case_sensitive);
+    }
     
     std::unique_ptr<LogPredicate> And(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b) { 
         return std::make_unique<AndPredicate>(std::move(a), std::move(b)); 
@@ -193,6 +307,8 @@ std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const {
     if (start_tp || end_tp || start_time || end_time) combine(std::make_unique<Filters::TimeRangePredicate>(start_tp, end_tp, start_time, end_time));
     if (source_file || thread_id) combine(std::make_unique<Filters::MetadataPredicate>(source_file, thread_id));
     if (!required_tags.empty()) combine(std::make_unique<Filters::TagPredicate>(required_tags));
+    if (since) combine(Filters::Since(*since));
+    if (!any_keywords.empty()) combine(Filters::AnyKeyword(any_keywords, case_sensitive));
     
     for (const auto& [k, v] : attribute_matches) {
         combine(Filters::Attribute(k, v));
@@ -256,6 +372,63 @@ void CsvExporter::exportEntries(std::span<const LogEntry> entries) {
         }
         out_ << "\"" << msg << "\",";
         out_ << "\"" << entry.thread_id << "\"\n";
+    }
+}
+
+void MarkdownExporter::exportStats(const LogStatistics& stats) {
+    out_ << "# Log Analysis Statistics\n\n";
+    out_ << "| Metric | Value |\n";
+    out_ << "| :--- | :--- |\n";
+    out_ << "| Total Entries | " << stats.total_entries << " |\n";
+    out_ << "| Duration | " << stats.duration.count() << "s |\n";
+    out_ << "| Entries/sec | " << std::fixed << std::setprecision(2) << stats.entries_per_second << " |\n";
+    out_ << "\n## Log Levels\n\n";
+    out_ << "| Level | Count |\n";
+    out_ << "| :--- | :--- |\n";
+    for (const auto& [level, count] : stats.level_counts) {
+        out_ << "| " << LogEntry::levelToString(level) << " | " << count << " |\n";
+    }
+}
+
+void MarkdownExporter::exportEntries(std::span<const LogEntry> entries) {
+    out_ << "| Timestamp | Level | Message |\n";
+    out_ << "| :--- | :--- | :--- |\n";
+    for (const auto& entry : entries) {
+        out_ << "| " << entry.timestamp << " | " << LogEntry::levelToString(entry.level) << " | " << entry.message << " |\n";
+    }
+}
+
+void ConsoleExporter::exportStats(const LogStatistics& stats) {
+    auto bold = use_color_ ? "\033[1m" : "";
+    auto reset = use_color_ ? "\033[0m" : "";
+    auto cyan = use_color_ ? "\033[36m" : "";
+
+    out_ << bold << cyan << "=== Log Analysis Statistics ===" << reset << "\n";
+    out_ << "Total entries: " << stats.total_entries << "\n";
+    out_ << "Duration:      " << stats.duration.count() << "s\n";
+    out_ << "Entries/sec:   " << std::fixed << std::setprecision(2) << stats.entries_per_second << "\n";
+    out_ << "\n" << bold << "Log Level Distribution:" << reset << "\n";
+    for (const auto& [level, count] : stats.level_counts) {
+        out_ << "  " << std::left << std::setw(10) << LogEntry::levelToString(level) << ": " << count << "\n";
+    }
+}
+
+void ConsoleExporter::exportEntries(std::span<const LogEntry> entries) {
+    for (const auto& entry : entries) {
+        if (use_color_) {
+            std::string color = "";
+            switch (entry.level) {
+                case LogLevel::ERROR: 
+                case LogLevel::CRITICAL: color = "\033[31m"; break; // Red
+                case LogLevel::WARNING: color = "\033[33m"; break; // Yellow
+                case LogLevel::INFO:    color = "\033[32m"; break; // Green
+                case LogLevel::DEBUG:   color = "\033[34m"; break; // Blue
+                default: break;
+            }
+            out_ << "\033[90m[" << entry.timestamp << "]\033[0m " << color << "[" << std::setw(7) << LogEntry::levelToString(entry.level) << "]\033[0m " << entry.message << "\n";
+        } else {
+            out_ << "[" << entry.timestamp << "] [" << std::setw(7) << LogEntry::levelToString(entry.level) << "] " << entry.message << "\n";
+        }
     }
 }
 
@@ -574,6 +747,41 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
     std::sort(stats.top_errors.begin(), stats.top_errors.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
     if (stats.top_errors.size() > 5) stats.top_errors.resize(5);
     return stats;
+}
+
+std::map<LogValue, size_t> LogAnalyzer::getAttributeFrequency(std::string_view attr_key) const {
+    std::map<LogValue, size_t> frequency;
+    std::string key(attr_key);
+    for (const auto& entry : entries_) {
+        auto it = entry.attributes.find(key);
+        if (it != entry.attributes.end()) {
+            frequency[it->second]++;
+        }
+    }
+    return frequency;
+}
+
+std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> LogAnalyzer::getTimeline(std::chrono::system_clock::duration bucket_size) const {
+    if (bucket_size.count() <= 0) return {};
+    std::map<std::chrono::system_clock::time_point, size_t> buckets;
+    for (const auto& entry : entries_) {
+        if (entry.time_point.time_since_epoch().count() == 0) continue;
+        auto bucket_start = std::chrono::time_point<std::chrono::system_clock>(
+            entry.time_point.time_since_epoch() - (entry.time_point.time_since_epoch() % bucket_size)
+        );
+        buckets[bucket_start]++;
+    }
+    return {buckets.begin(), buckets.end()};
+}
+
+std::vector<LogEntry> LogAnalyzer::getTrace(std::string_view trace_id) const {
+    std::vector<LogEntry> result;
+    for (const auto& entry : entries_) {
+        if (entry.trace_id == trace_id) {
+            result.push_back(entry);
+        }
+    }
+    return result;
 }
 
 std::span<const LogEntry> LogAnalyzer::getEntriesSpan() const { return entries_; }
