@@ -153,7 +153,30 @@ namespace Filters {
 
     std::unique_ptr<LogPredicate> Level(LogLevel l) { return std::make_unique<LevelPredicate>(l); }
     std::unique_ptr<LogPredicate> MinLevel(LogLevel l) { return std::make_unique<MinLevelPredicate>(l); }
-    // ... rest of namespace ...
+    
+    std::unique_ptr<LogPredicate> Keyword(std::string k, bool case_sensitive) { 
+        return std::make_unique<KeywordPredicate>(std::move(k), case_sensitive); 
+    }
+    
+    std::unique_ptr<LogPredicate> Regex(std::string pattern) { 
+        return std::make_unique<RegexPredicate>(std::move(pattern)); 
+    }
+    
+    std::unique_ptr<LogPredicate> Attribute(std::string key, LogValue val) { 
+        return std::make_unique<AttributePredicate>(std::move(key), std::move(val)); 
+    }
+    
+    std::unique_ptr<LogPredicate> And(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b) { 
+        return std::make_unique<AndPredicate>(std::move(a), std::move(b)); 
+    }
+    
+    std::unique_ptr<LogPredicate> Or(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b) { 
+        return std::make_unique<OrPredicate>(std::move(a), std::move(b)); 
+    }
+    
+    std::unique_ptr<LogPredicate> Not(std::unique_ptr<LogPredicate> p) { 
+        return std::make_unique<NotPredicate>(std::move(p)); 
+    }
 }
 
 std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const {
@@ -374,7 +397,9 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
                 break;
             }
         }
-        process_buffer();
+        if (config_.max_errors == 0 || result.error_count < config_.max_errors) {
+            process_buffer();
+        }
 
         if (progress) progress({bytes_processed, total_bytes, line_number});
         
@@ -436,26 +461,31 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
                     if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
                     
                     if (is_new && !buffer.empty()) {
-                        LogEntry entry = parseLogLine(buffer);
-                        if (!entry.timestamp.empty() || !entry.message.empty()) {
-                            // Note: applyEnrichers is not thread-safe if it modifies shared state, but here we assume enrichers are stateless or thread-safe.
-                            // Also applyEnrichers reads enrichers_ which is read-only here.
-                            applyEnrichers(entry);
-                            chunk_entries.push_back(std::move(entry));
-                        }
-                        buffer = line;
-                    } else {
-                        if (!buffer.empty()) buffer += "\n";
-                        buffer += line;
-                    }
-                }
-                if (!buffer.empty()) {
-                    LogEntry entry = parseLogLine(buffer);
-                    if (!entry.timestamp.empty() || !entry.message.empty()) {
-                        applyEnrichers(entry);
-                        chunk_entries.push_back(std::move(entry));
-                    }
-                }
+                                            LogEntry entry = parseLogLine(buffer);
+                                            if (!entry.timestamp.empty() || !entry.message.empty()) {
+                                                // Note: applyEnrichers is not thread-safe if it modifies shared state, but here we assume enrichers are stateless or thread-safe.
+                                                // Also applyEnrichers reads enrichers_ which is read-only here.
+                                                applyEnrichers(entry);
+                                                chunk_entries.push_back(std::move(entry));
+                                            } else { // It's an invalid entry, count as error
+                                                total_errors.fetch_add(1);
+                                            }
+                                            buffer = line;
+                                        } else {
+                                            if (!buffer.empty()) buffer += "\n";
+                                            buffer += line;
+                                        }
+                                    }
+                                    if (!buffer.empty()) {
+                                        LogEntry entry = parseLogLine(buffer);
+                                        if (!entry.timestamp.empty() || !entry.message.empty()) {
+                                            applyEnrichers(entry);
+                                            chunk_entries.push_back(std::move(entry));
+                                        } else { // It's an invalid entry, count as error
+                                            total_errors.fetch_add(1);
+                                        }
+                                    }
+                        
                 return chunk_entries;
             }));
         }
