@@ -2,28 +2,24 @@
 # GENERAL BUILD OUTPUT
 ###############################################################################
 build/
-**/build/
 **/build-*/
-**/cmake-build-*/
 **/build_*/
-**/build_test/
-**/build_examples/
-build_check/
-build-coverage/
+**/cmake-build-*/
 out/
 dist/
 target/
 bin/
 lib/
 artifacts/
+build_check/
+build-coverage/
 
-# Allow generated Sphinx/Doxygen build output
+# Allow explicitly tracked documentation output
 !docs/build/
 
 ###############################################################################
-# C++ / COMPILER OUTPUTS
+# C / C++ / COMPILER OUTPUTS
 ###############################################################################
-# Object & precompiled files
 *.o
 *.obj
 *.lo
@@ -32,13 +28,11 @@ artifacts/
 *.h.gch
 *.h.pch
 
-# Static libraries
 *.a
 *.a.*
 *.lib
 *.lib.*
 
-# Shared/Dynamic libs
 *.so
 *.so.*
 *.dylib
@@ -46,7 +40,6 @@ artifacts/
 *.dll
 *.dll.*
 
-# Executables / binary formats
 *.exe
 *.out
 *.elf
@@ -68,7 +61,6 @@ Makefile.in
 *.mk
 *.make
 
-# CompDB ignored globally (default)
 compile_commands.json
 
 build.ninja
@@ -78,15 +70,17 @@ build.ninja
 ###############################################################################
 # GENERATED DOCUMENTATION
 ###############################################################################
-# Doxygen output
+doxygen/
+
 doc/
 doc/api/
 doc/api-test*/
 doc/html/
 doc/xml/
+doc/latex/
 doc/rtf/
 doc/man/
-doc/latex/
+
 docs/api/
 docs/api-test*/
 docs/html/
@@ -94,23 +88,19 @@ docs/xml/
 docs/latex/
 docs/rtf/
 docs/man/
-doxygen/
 
-# User-specific config
 doxyfile.user
 
-# Sphinx output
 doc/_build/
 docs/_build/
 
-# Audit reports
 doc/audit/
 doc/audits/
 docs/audit/
 docs/audits/
 
 ###############################################################################
-# COVERAGE & TEST OUTPUT
+# TESTING / COVERAGE
 ###############################################################################
 *.gcov
 *.gcda
@@ -118,21 +108,12 @@ docs/audits/
 *.lcov
 coverage/
 
-# Test result directories
+Testing/
+TestingTemporary/
+
 test_results/
 test_results_*/
-*.test
-*.junit
-*.xml
-*.log
-*.csv
-*.txt
 
-# CTest dirs
-Testing/
-Testing*/
-
-# Valgrind / Sanitizer
 *.vglog
 valgrind-out.txt
 *.asan
@@ -141,13 +122,11 @@ valgrind-out.txt
 *.ubsan
 
 ###############################################################################
-# DEBUG / PROFILING ARTIFACTS
+# DEBUG / PROFILING
 ###############################################################################
-# macOS / Clang
 *.dSYM/
 *.dSYM
 
-# MSVC
 *.pdb
 *.idb
 *.ilk
@@ -155,21 +134,18 @@ valgrind-out.txt
 *.map
 *.su
 
-# Profiling
 *.prof
 *.gprof
 gmon.out
 perf.data
 perf.data.old
 
-# Core dumps
 core.*
 *.core
 
 ###############################################################################
-# IDE / EDITOR FILES
+# IDE / EDITOR
 ###############################################################################
-# Vim / Emacs
 *~
 *.swp
 *.swo
@@ -180,34 +156,31 @@ core.*
 .\#*
 *.elc
 
-# VS Code
 .vscode/
 *.code-workspace
 *.code-workspace.lock
 
-# JetBrains (CLion, Rider, etc)
 .idea/
 *.iml
 *.ipr
 *.iws
-*.iws.lock
 .idea/shelf/
 
-# Sublime
 *.sublime-project
 *.sublime-workspace
 
+.cache/clangd/
+.clangd/index/
+
 ###############################################################################
-# FRAMEWORK GENERATED FILES
+# FRAMEWORK GENERATED
 ###############################################################################
-# Qt
 moc_*.cpp
 qrc_*.cpp
 ui_*.h
 *.qm
 *.moc
 
-# CodeBlocks
 *.depend
 *.layout
 *.cbp
@@ -233,31 +206,107 @@ conanfile.txt.lock
 vcpkg_installed/
 
 # CMake FetchContent / ExternalProject
-external/
 _deps/
 **/_deps/
-**/build/_deps/
 
 ###############################################################################
-# LANGUAGE / TOOL RUNTIME
+# LANGUAGE: JAVA
 ###############################################################################
-# Python
+*.class
+*.jar
+*.war
+*.ear
+
+.gradle/
+.mvn/timing.properties
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+###############################################################################
+# LANGUAGE: PHP
+###############################################################################
+vendor/
+composer.lock
+
+.phpunit.result.cache
+.php-cs-fixer.cache
+.phpstan/cache/
+.psalm/
+psalm.xml
+psalm.xml.dist
+
+###############################################################################
+# LANGUAGE: PYTHON
+###############################################################################
 __pycache__/
 *.py[cod]
 *$py.class
-env/
+
+.venv/
 venv/
+env/
 env.bak/
 venv.bak/
 
-# Node
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.wheels/
+
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+###############################################################################
+# LANGUAGE: RUST
+###############################################################################
+target/
+rust-project.json
+
+###############################################################################
+# LANGUAGE: GO
+###############################################################################
+*.test
+coverage.out
+go.work
+go.work.sum
+
+###############################################################################
+# LANGUAGE: TYPESCRIPT / JAVASCRIPT
+###############################################################################
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+
+.esbuild/
+.vite/
+.parcel-cache/
+.turbo/
+
+*.tsbuildinfo
+
+.next/
+.nuxt/
+.svelte-kit/
+.angular/
+
+.eslintcache
+.stylelintcache
+.prettier-cache/
 
 ###############################################################################
-# OS JUNK FILES
+# OS JUNK
 ###############################################################################
 .DS_Store
 .DS_Store?
@@ -276,7 +325,6 @@ ehthumbs.db
 *.lock.*
 *.backup
 *.backup.*
-*.bak
 Backup*/
 backup*/
 
@@ -295,26 +343,24 @@ backup*/
 *.secret
 
 ###############################################################################
-# PROJECT-SPECIFIC
+# PROJECT-SPECIFIC (generated only)
 ###############################################################################
 bot/
 data/
 ci-gpg-out/
 .last_prompt
-bin
-# Legacy install directory (should be generated by CMake install, not tracked)
 install/
 
 ###############################################################################
-# AI AGENTS & IDEs
+# AI AGENTS / IDE AUTOMATION
 ###############################################################################
-.cursor
-.antigravity
-.gemini
-.codex
+.cursor/
+.antigravity/
+.gemini/
+.codex/
 
 ###############################################################################
 # RELEASES
 ###############################################################################
-releases
+releases/
 !releases/README.md
