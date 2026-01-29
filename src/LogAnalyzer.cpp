@@ -90,7 +90,7 @@ namespace LogQuery
             if (key_ == "message") { entry_val = entry.message; found = true; }
             else if (key_ == "timestamp") { entry_val = entry.timestamp; found = true; }
             else if (key_ == "thread_id") { entry_val = entry.thread_id; found = true; }
-            else if (key_ == "level") { entry_val = std::string(LogEntry::levelToString(entry.level)); found = true; }
+            else if (key_ == "level") { entry_val = static_cast<int64_t>(entry.level); found = true; }
             else if (key_ == "source_file") { entry_val = entry.source_file; found = true; }
             else {
                 // Check attributes
@@ -105,13 +105,6 @@ namespace LogQuery
             // Perform comparison
             // Simplified comparison logic. In a real system, this would be more robust (type coercion).
             
-            // Helper for typed comparison
-            auto compare = [&](auto a, auto b) -> int {
-                if (a < b) return -1;
-                if (a > b) return 1;
-                return 0;
-            };
-
             // String comparison
             if (std::holds_alternative<std::string>(entry_val) && std::holds_alternative<std::string>(val_)) {
                 int cmp = std::get<std::string>(entry_val).compare(std::get<std::string>(val_));
@@ -294,12 +287,10 @@ namespace LogQuery
 
                     // Special handling for core fields
                     if (key == "level") {
-                         // Convert string value to standard level string for comparison if possible, or keep as is.
-                         // FieldPredicate handles level by converting entry.level to string.
-                         // So we should pass the string representation of level if the user passed a string.
-                         // If user passed "ERROR", val is "ERROR".
-                         // If user passed identifier ERROR, it might be parsed as string "ERROR" by lexer if we don't handle it.
-                         // My lexer parses identifiers as strings basically.
+                         // Convert string value to standard level enum value for comparison
+                         if (std::holds_alternative<std::string>(val)) {
+                            val = static_cast<int64_t>(LogEntry::parseLevel(std::get<std::string>(val)));
+                         }
                     }
 
                     return std::make_unique<FieldPredicate>(key, op, val);

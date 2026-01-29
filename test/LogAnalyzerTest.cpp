@@ -1102,27 +1102,10 @@ TEST_F(LogAnalyzerTest, BasicLQL)
     EXPECT_EQ(entries.size(), 1);
     EXPECT_EQ(entries[0].level, LogLevel::ERROR);
 
-    // message contains "System"
-    // "System started", "System crash imminent"
-    entries = analyzer.query("message == \"System started\""); // Keyword match behavior depends on implementation, but LQL Attribute(message, ...) checks exact match or we used existing filters?
-    // Wait, in my parser implementation:
-    // Identifier "message" -> Attribute("message", val)
-    // Attribute predicate checks exact match if value is string.
-    // If I want contains, I need a different syntax or keyword support in LQL.
-    // My parser implemented Attribute(key, val) for equality.
-    // Let's test exact match for now if that's what Attribute does.
-    // Checking AttributePredicate: it uses map find and equality.
-    // So "message" attribute must exist and be equal.
-    // BUT, standard LogEntry parsing puts message in `message` field, NOT in `attributes` map unless enriched.
-    // The parser implementation handled "level" specially, but "message" falls through to Attribute.
-    // Wait, LogEntry `attributes` does NOT contain "message".
-    // I need to update the LQL parser or LogEntry to ensure message is accessible or special case it in parser.
-    // In my parser implementation:
-    // if (key == "level") ...
-    // else return Filters::Attribute(key, val);
-    // So "message" queries will fail if "message" is not in attributes.
-    // I should fix the parser in LogAnalyzer.cpp to handle "message" (and timestamp, thread_id etc).
-    // Let's hold on this test and FIX the parser first.
+    // message exact match
+    entries = analyzer.query("message == \"System started\""); 
+    EXPECT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].message, "System started");
 }
 
 TEST_F(LogAnalyzerTest, LQLComplex)
@@ -1131,12 +1114,25 @@ TEST_F(LogAnalyzerTest, LQLComplex)
     analyzer.loadFile(testLogFile);
 
     // level >= WARNING AND (message == "Connection failed" OR level == CRITICAL)
-    // "Connection failed" is ERROR (>= WARNING) -> Match
-    // "Retrying connection" is WARNING. message != "Connection failed", level != CRITICAL -> No Match
-    // "System crash imminent" is CRITICAL -> Match
+    auto entries = analyzer.query("level >= WARNING AND (message == \"Connection failed\" OR level == CRITICAL)");
     
-    // NOTE: Same issue with "message" field.
-    // Also "level >= WARNING" maps to MinLevel.
+    // Matches:
+    // [ERROR] Connection failed (ERROR >= WARNING, message match)
+    // [CRITICAL] System crash imminent (CRITICAL >= WARNING, level match)
+    // Non-matches:
+    // [WARNING] Retrying connection (WARNING >= WARNING, but message mismatch and level mismatch)
+    
+    EXPECT_EQ(entries.size(), 2);
+    
+    // Verify content
+    bool found_error = false;
+    bool found_critical = false;
+    for(const auto& e : entries) {
+        if (e.level == LogLevel::ERROR) found_error = true;
+        if (e.level == LogLevel::CRITICAL) found_critical = true;
+    }
+    EXPECT_TRUE(found_error);
+    EXPECT_TRUE(found_critical);
 }
 
 // --- Suite 19: AnalyticsTest ---
