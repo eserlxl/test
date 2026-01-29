@@ -57,6 +57,21 @@ uint64_t LogEntry::currentProcessId() {
 #endif
 }
 
+std::string LogEntry::currentHostName() {
+    char hostname[256];
+#if defined(_WIN32) || defined(_WIN64)
+    DWORD size = sizeof(hostname);
+    if (GetComputerNameA(hostname, &size)) {
+        return hostname;
+    }
+#else
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        return hostname;
+    }
+#endif
+    return "unknown";
+}
+
 LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_location loc) {
     LogEntry entry;
     entry.level = level;
@@ -65,6 +80,7 @@ LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_
     entry.timestamp = entry.generatedTimestampString();
     entry.withSource(loc);
     entry.process_id = currentProcessId();
+    entry.host_name = currentHostName();
     
     std::stringstream ss;
     ss << std::this_thread::get_id();
@@ -104,6 +120,16 @@ LogEntry& LogEntry::withAttributes(const std::map<std::string, LogValue>& attrs)
 
 LogEntry& LogEntry::withProcessId(uint64_t pid) {
     process_id = pid;
+    return *this;
+}
+
+LogEntry& LogEntry::withHost(std::string_view host) {
+    host_name = host;
+    return *this;
+}
+
+LogEntry& LogEntry::withApp(std::string_view app) {
+    app_name = app;
     return *this;
 }
 
@@ -518,6 +544,7 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
     LogEntry entry;
     // Auto-populate defaults
     entry.process_id = currentProcessId();
+    entry.host_name = currentHostName();
     entry.time_point = std::chrono::system_clock::now();
     entry.timestamp = entry.generatedTimestampString();
     
@@ -536,6 +563,10 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
         } else if (key == "process_id") {
             if (std::holds_alternative<uint64_t>(value)) entry.process_id = std::get<uint64_t>(value);
             else if (std::holds_alternative<int64_t>(value)) entry.process_id = static_cast<uint64_t>(std::get<int64_t>(value));
+        } else if (key == "host_name" && std::holds_alternative<std::string>(value)) {
+            entry.host_name = std::get<std::string>(value);
+        } else if (key == "app_name" && std::holds_alternative<std::string>(value)) {
+            entry.app_name = std::get<std::string>(value);
         } else if (key == "thread_id" && std::holds_alternative<std::string>(value)) {
             entry.thread_id = std::get<std::string>(value);
         } else if (key == "trace_id" && std::holds_alternative<std::string>(value)) {
@@ -548,6 +579,24 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
         }
     }
     return entry;
+}
+
+std::map<std::string, LogValue> LogEntry::toMap() const {
+    std::map<std::string, LogValue> m;
+    m["timestamp"] = timestamp.empty() ? generatedTimestampString() : timestamp;
+    m["level"] = std::string(levelToString(level));
+    m["message"] = message;
+    if (process_id != 0) m["process_id"] = process_id;
+    if (!host_name.empty()) m["host_name"] = host_name;
+    if (!app_name.empty()) m["app_name"] = app_name;
+    if (!thread_id.empty()) m["thread_id"] = thread_id;
+    if (!trace_id.empty()) m["trace_id"] = trace_id;
+    if (!span_id.empty()) m["span_id"] = span_id;
+    
+    for (const auto& [key, value] : attributes) {
+        m[key] = value;
+    }
+    return m;
 }
 
 std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_str) {
@@ -581,10 +630,56 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
 
         // Parse value based on key
         if (key == "timestamp") {
-            auto val_res = parseJsonString(it, end);
+            auto val_res = parseLogValue(it, end);
             if (!val_res) return std::unexpected("Failed to parse timestamp: " + val_res.error());
-            entry.timestamp = *val_res;
-            entry.parseTime(); // Attempt to parse into time_point
+            
+            if (std::holds_alternative<std::string>(*val_res)) {
+                entry.timestamp = std::get<std::string>(*val_res);
+                // ISO8601 detection
+                if (entry.timestamp.find('T') != std::string::npos && entry.timestamp.find('Z') != std::string::npos) {
+                    std::tm tm = {};
+                    std::istringstream tss(entry.timestamp);
+                    int y, m, d, h, min, s;
+                    char t, dash1, dash2, c1, c2;
+                    if (tss >> y >> dash1 >> m >> dash2 >> d >> t >> h >> c1 >> min >> c2 >> s) {
+                        tm.tm_year = y - 1900;
+                        tm.tm_mon = m - 1;
+                        tm.tm_mday = d;
+                        tm.tm_hour = h;
+                        tm.tm_min = min;
+                        tm.tm_sec = s;
+                        
+                        std::time_t tt;
+                        #if defined(_WIN32) || defined(_WIN64)
+                            tt = _mkgmtime(&tm);
+                        #else
+                            tt = timegm(&tm);
+                        #endif
+                        
+                        if (tt != -1) {
+                            auto tp = std::chrono::system_clock::from_time_t(tt);
+                            if (tss.peek() == '.') {
+                                tss.ignore();
+                                std::string ms_str;
+                                while (std::isdigit(tss.peek())) ms_str += static_cast<char>(tss.get());
+                                if (!ms_str.empty()) {
+                                    double val = std::stod("0." + ms_str);
+                                    tp += std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(static_cast<long long>(val * 1'000'000'000)));
+                                }
+                            }
+                            entry.time_point = tp;
+                        }
+                    }
+                } else {
+                    entry.parseTime(); // Attempt to parse into time_point
+                }
+            } else if (std::holds_alternative<int64_t>(*val_res)) {
+                entry.time_point = std::chrono::system_clock::time_point(std::chrono::milliseconds(std::get<int64_t>(*val_res)));
+                entry.timestamp = entry.generatedTimestampString();
+            } else if (std::holds_alternative<uint64_t>(*val_res)) {
+                entry.time_point = std::chrono::system_clock::time_point(std::chrono::milliseconds(std::get<uint64_t>(*val_res)));
+                entry.timestamp = entry.generatedTimestampString();
+            }
         } else if (key == "level") {
             auto val_res = parseJsonString(it, end);
             if (!val_res) return std::unexpected("Failed to parse level: " + val_res.error());
@@ -603,6 +698,14 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
             } else {
                 return std::unexpected("process_id must be a number");
             }
+        } else if (key == "host_name") {
+            auto val_res = parseJsonString(it, end);
+            if (!val_res) return std::unexpected("Failed to parse host_name: " + val_res.error());
+            entry.host_name = *val_res;
+        } else if (key == "app_name") {
+            auto val_res = parseJsonString(it, end);
+            if (!val_res) return std::unexpected("Failed to parse app_name: " + val_res.error());
+            entry.app_name = *val_res;
         } else if (key == "source") {
             it = skipWhitespace(it, end);
             if (it == end || *it != '{') {
@@ -756,6 +859,14 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
         oss << "," << nl << indent << "\"process_id\": " << process_id;
     }
 
+    if (!host_name.empty()) {
+        oss << "," << nl << indent << "\"host_name\": \"" << escapeJson(host_name) << "\"";
+    }
+
+    if (!app_name.empty()) {
+        oss << "," << nl << indent << "\"app_name\": \"" << escapeJson(app_name) << "\"";
+    }
+
     if (options.include_source && (!source_file.empty() || !source_function.empty() || source_line != 0)) {
         oss << "," << nl << indent << "\"source\": {" << nl;
         oss << indent << indent << "\"file\": \"" << escapeJson(source_file) << "\"," << nl;
@@ -850,6 +961,23 @@ std::strong_ordering LogEntry::operator<=>(const LogEntry& other) const {
 
 bool LogEntry::operator==(const LogEntry& other) const {
     return (*this <=> other) == 0;
+}
+
+bool LogEntry::isValid() const noexcept {
+    return level != LogLevel::UNKNOWN && !message.empty();
+}
+
+int LogEntry::getSeverityValue() const {
+    switch (level) {
+        case LogLevel::DEBUG: return 7;
+        case LogLevel::INFO: return 6;
+        case LogLevel::WARNING: return 4;
+        case LogLevel::ERROR: return 3;
+        case LogLevel::CRITICAL: return 2;
+        default: return 0; // Emergency/Unknown? treating UNKNOWN as 0 might be misleading but fits the return type.
+                           // Actually, RFC 5424: 0 is Emergency. 
+                           // Let's assume Unknown is not standard.
+    }
 }
 
 std::ostream& operator<<(std::ostream& os, const LogEntry& entry) {

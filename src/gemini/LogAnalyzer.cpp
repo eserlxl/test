@@ -833,7 +833,7 @@ std::vector<LogEntry> LogAnalyzer::getEntriesSpan() const {
     std::shared_lock lock(rw_mutex_);
     return entries_; 
 }
-const std::vector<LogEntry>& LogAnalyzer::getEntries() const { 
+std::vector<LogEntry> LogAnalyzer::getEntries() const { 
     std::shared_lock lock(rw_mutex_);
     return entries_; 
 }
