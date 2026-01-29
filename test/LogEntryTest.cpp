@@ -1,30 +1,33 @@
-#include <gemini/LogEntry.h>
+#include <LogEntry.h>
 #include <cassert>
 #include <iostream>
 #include <format>
 #include <sstream>
 
-void testLevelParsing() {
+void testLevelParsing()
+{
     assert(LogEntry::parseLevel("DEBUG") == LogLevel::DEBUG);
     assert(LogEntry::parseLevel("dbg") == LogLevel::DEBUG);
     assert(LogEntry::parseLevel("INFO") == LogLevel::INFO);
     assert(LogEntry::parseLevel("error") == LogLevel::ERROR);
     assert(LogEntry::parseLevel("UNKNOWN_JUNK") == LogLevel::UNKNOWN);
-    
+
     // Test backward compatibility
     assert(parseLogLevel("DEBUG") == LogLevel::DEBUG);
-    
+
     std::cout << "testLevelParsing passed" << std::endl;
 }
 
-void testLevelToString() {
+void testLevelToString()
+{
     assert(LogEntry::levelToString(LogLevel::DEBUG) == "DEBUG");
     assert(LogEntry::levelToString(LogLevel::INFO) == "INFO");
     assert(LogEntry::levelToString(LogLevel::UNKNOWN) == "UNKNOWN");
     std::cout << "testLevelToString passed" << std::endl;
 }
 
-void testTimeParsing() {
+void testTimeParsing()
+{
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00";
     assert(entry.parseTime());
@@ -36,41 +39,43 @@ void testTimeParsing() {
     entry.timestamp = "2023-10-27 10:00:00.123";
     assert(entry.parseTime());
     generated = entry.generatedTimestampString(true);
-    if (generated != "2023-10-27 10:00:00.123") {
+    if (generated != "2023-10-27 10:00:00.123")
+    {
         std::cout << "Generated: '" << generated << "', Expected: '2023-10-27 10:00:00.123'" << std::endl;
     }
     assert(generated == "2023-10-27 10:00:00.123");
-    
+
     // Test invalid time
     entry.timestamp = "invalid";
     assert(!entry.parseTime());
-    
+
     std::cout << "testTimeParsing passed" << std::endl;
 }
 
-void testComparison() {
+void testComparison()
+{
     LogEntry e1;
     e1.timestamp = "2023-10-27 10:00:00.000";
     e1.parseTime();
-    
+
     LogEntry e2;
     e2.timestamp = "2023-10-27 10:00:00.001";
     e2.parseTime();
-    
+
     assert(e1 < e2);
     assert(e2 > e1);
     assert(e1 != e2);
-    
+
     LogEntry e3;
     e3.timestamp = "2023-10-27 10:00:00.000";
     e3.parseTime();
     e3.message = "A"; // Default message is empty
     e1.message = "A";
     assert(e1 == e3);
-    
+
     // Test comparison with strings only (no time_point)
     LogEntry e4;
-    e4.timestamp = "2023-10-27 10:00:00.000"; 
+    e4.timestamp = "2023-10-27 10:00:00.000";
     e4.message = "A";
     assert(e1 == e4);
 
@@ -83,40 +88,42 @@ void testComparison() {
     LogEntry e6 = e5;
     e6.message = "B";
     assert(e5 < e6);
-    
+
     std::cout << "testComparison passed" << std::endl;
 }
 
-void testFormatting() {
+void testFormatting()
+{
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00.000";
     entry.level = LogLevel::INFO;
     entry.message = "System started";
-    
+
     std::string formatted = std::format("{}", entry);
     // Expected: [2023-10-27 10:00:00.000] [INFO] System started
     assert(formatted == "[2023-10-27 10:00:00.000] [INFO] System started");
     std::cout << "testFormatting passed" << std::endl;
 }
 
-void testStructuredLogging() {
+void testStructuredLogging()
+{
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00.000";
     entry.level = LogLevel::INFO;
     entry.message = "User login";
-    
+
     // Test Attributes
     entry.setAttribute("user_id", "12345");
     entry.setAttribute("ip_address", "192.168.1.1");
-    
+
     // Use getAttributeAsString for checking
     assert(entry.getAttributeAsString("user_id") == "12345");
     assert(entry.getAttributeAsString("ip_address") == "192.168.1.1");
-    
+
     // Test typed attributes
     entry.setAttribute("retries", int64_t{3}); // int -> int64_t
     entry.setAttribute("u_val", uint64_t{100});
-    entry.setAttribute("score", 95.5); // double
+    entry.setAttribute("score", 95.5);    // double
     entry.setAttribute("is_admin", true); // bool
 
     // Check variant content
@@ -150,7 +157,7 @@ void testStructuredLogging() {
     assert(json.find("\"message\": \"User login\"") != std::string::npos);
     assert(json.find("\"user_id\": \"12345\"") != std::string::npos);
     assert(json.find("\"tags\": [\"auth\", \"security\"]") != std::string::npos);
-    
+
     // Check typed values in JSON (not quoted)
     assert(json.find("\"retries\": 3") != std::string::npos);
     assert(json.find("\"u_val\": 100") != std::string::npos);
@@ -160,7 +167,7 @@ void testStructuredLogging() {
     assert(json.find("\"file\": \"auth.cpp\"") != std::string::npos);
     assert(json.find("\"thread_id\": \"0x123\"") != std::string::npos);
     assert(json.find("\"line\": 42") != std::string::npos);
-    
+
     // Test JSON Options
     LogEntry::JsonOptions opts;
     opts.pretty = true;
@@ -171,115 +178,102 @@ void testStructuredLogging() {
 
     // Test Exception
     LogEntry e_entry;
-    try {
+    try
+    {
         throw std::runtime_error("test exception");
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         e_entry.withException(e);
     }
     assert(e_entry.getAttributeAs<std::string>("exception_message") == "test exception");
-    
+
     std::cout << "testStructuredLogging passed" << std::endl;
 }
 
-void testFluentApi() {
+void testFluentApi()
+{
     auto entry = LogEntry::create(LogLevel::WARNING, "Something happened")
-        .withAttribute("error_code", int64_t{404})
-        .withAttribute("retry", false)
-        .withThreadId("thread-1");
-        
+                     .withAttribute("error_code", int64_t{404})
+                     .withAttribute("retry", false)
+                     .withThreadId("thread-1");
+
     assert(entry.level == LogLevel::WARNING);
     assert(entry.message == "Something happened");
     assert(std::get<int64_t>(entry.attributes["error_code"]) == 404);
     assert(std::get<bool>(entry.attributes["retry"]) == false);
     assert(entry.thread_id == "thread-1");
     assert(!entry.source_file.empty()); // Should be captured by create()
-    
+
     std::cout << "testFluentApi passed" << std::endl;
 }
 
-void testStreamOperator() {
+void testStreamOperator()
+{
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00";
     entry.level = LogLevel::ERROR;
     entry.message = "Stream test";
-    
+
     std::ostringstream oss;
     oss << entry;
     assert(oss.str() == "[2023-10-27 10:00:00] [ERROR] Stream test");
-    
-        std::cout << "testStreamOperator passed" << std::endl;
-    
-    }
-    
-    
-    
-    void testSeverityChecks() {
-    
-        assert(isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
-    
-        assert(isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
-    
-        assert(!isAtLeast(LogLevel::INFO, LogLevel::WARNING));
-    
-        
-    
-        assert(isError(LogLevel::ERROR));
-    
-        assert(isError(LogLevel::CRITICAL));
-    
-        assert(!isError(LogLevel::WARNING));
-    
-        assert(!isError(LogLevel::INFO));
-    
-        
-    
-        std::cout << "testSeverityChecks passed" << std::endl;
-    
-    }
-    
-    
-    
-    void testTracing() {
-    
-        LogEntry entry = LogEntry::create(LogLevel::INFO, "Tracing test")
-    
-            .withTraceContext("trace-123", "span-456");
-    
-            
-    
-        assert(entry.trace_id == "trace-123");
-    
-        assert(entry.span_id == "span-456");
-    
-        
-    
-        std::string json = entry.toJson();
-    
-        assert(json.find("\"trace_id\": \"trace-123\"") != std::string::npos);
-    
-        assert(json.find("\"span_id\": \"span-456\"") != std::string::npos);
-    
-        
-    
-        // Test comparison with tracing
-    
-        LogEntry e2 = entry;
-    
-        e2.trace_id = "trace-124";
-    
-        assert(entry < e2);
-    
-        
-    
-        std::cout << "testTracing passed" << std::endl;
-    
-    }
-    
-    
-    
-    void testJsonDeserialization() {
-    
-        std::string json = R"({
+
+    std::cout << "testStreamOperator passed" << std::endl;
+}
+
+void testSeverityChecks()
+{
+
+    assert(isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
+
+    assert(isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
+
+    assert(!isAtLeast(LogLevel::INFO, LogLevel::WARNING));
+
+    assert(isError(LogLevel::ERROR));
+
+    assert(isError(LogLevel::CRITICAL));
+
+    assert(!isError(LogLevel::WARNING));
+
+    assert(!isError(LogLevel::INFO));
+
+    std::cout << "testSeverityChecks passed" << std::endl;
+}
+
+void testTracing()
+{
+
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Tracing test")
+
+                         .withTraceContext("trace-123", "span-456");
+
+    assert(entry.trace_id == "trace-123");
+
+    assert(entry.span_id == "span-456");
+
+    std::string json = entry.toJson();
+
+    assert(json.find("\"trace_id\": \"trace-123\"") != std::string::npos);
+
+    assert(json.find("\"span_id\": \"span-456\"") != std::string::npos);
+
+    // Test comparison with tracing
+
+    LogEntry e2 = entry;
+
+    e2.trace_id = "trace-124";
+
+    assert(entry < e2);
+
+    std::cout << "testTracing passed" << std::endl;
+}
+
+void testJsonDeserialization()
+{
+
+    std::string json = R"({
     
             "timestamp": "2023-10-27 10:00:00.123",
     
@@ -318,244 +312,235 @@ void testStreamOperator() {
             }
     
         })";
-    
-    
-    
-        auto result = LogEntry::fromJson(json);
-    
-        if (!result) {
-    
-            std::cout << "JSON parsing failed: " << result.error() << std::endl;
-    
-        }
-    
-        assert(result.has_value());
-    
-        
-    
-        const LogEntry& entry = *result;
-    
-        assert(entry.level == LogLevel::ERROR);
-    
-        assert(entry.message == "Test deserialization");
-    
-        assert(entry.timestamp == "2023-10-27 10:00:00.123");
-    
-        assert(entry.thread_id == "thread-1");
-    
-        assert(entry.trace_id == "trace-abc");
-    
-        assert(entry.span_id == "span-def");
-    
-        
-    
-        assert(entry.hasTag("tag1"));
-    
-        assert(entry.hasTag("tag2"));
-    
-        
-    
-        assert(entry.getAttributeAsString("key1") == "value1");
-    
-        assert(std::get<int64_t>(entry.attributes.at("key2")) == 123);
-    
-        assert(std::get<bool>(entry.attributes.at("key3")) == true);
-    
-        // Double comparison
-    
-        assert(std::abs(std::get<double>(entry.attributes.at("key4")) - 123.456) < 0.0001);
-    
-        
-    
-        assert(entry.source_file == "test.cpp");
-    
-        assert(entry.source_function == "main");
-    
-        assert(entry.source_line == 100);
-    
-    
-    
-        // Test Round Trip
-    
-        std::string serialized = entry.toJson();
-    
-        auto deserialized = LogEntry::fromJson(serialized);
-    
-        assert(deserialized.has_value());
-    
-        assert(deserialized->message == entry.message);
-    
-        assert(deserialized->tags == entry.tags);
-    
-        // Note: attributes might have slightly different string representations for doubles if not carefully handled, but basic types should match.
-    
-        
-    
-        std::cout << "testJsonDeserialization passed" << std::endl;
-    
-    }
-    
-    
-    
-    void testCloning() {
-        LogEntry entry = LogEntry::create(LogLevel::INFO, "Original");
-        entry.withTag("original_tag");
-        
-        LogEntry clone = entry.clonedWithTag("new_tag");
-        assert(clone.hasTag("original_tag"));
-        assert(clone.hasTag("new_tag"));
-        assert(!entry.hasTag("new_tag")); // Original should be unmodified
-        
-        std::cout << "testCloning passed" << std::endl;
-    }
-    
-    void testToMapRoundTrip() {
-        LogEntry original = LogEntry::create(LogLevel::INFO, "Map Round Trip Test");
-        original.withAttribute("int_attr", int64_t{123})
-                .withAttribute("double_attr", 45.67)
-                .withAttribute("bool_attr", true)
-                .withTag("map_test")
-                .withProcessId(54321)
-                .withHost("test-host")
-                .withApp("test-app")
-                .withTraceContext("trace-xyz", "span-abc");
 
-        std::map<std::string, LogValue> map_repr = original.toMap();
-        LogEntry from_map = LogEntry::fromMap(map_repr);
+    auto result = LogEntry::fromJson(json);
 
-        assert(from_map.level == original.level);
-        assert(from_map.message == original.message);
-        assert(from_map.process_id == original.process_id);
-        assert(from_map.host_name == original.host_name);
-        assert(from_map.app_name == original.app_name);
-        assert(from_map.trace_id == original.trace_id);
-        assert(from_map.span_id == original.span_id);
-        assert(from_map.getAttributeAs<int64_t>("int_attr") == original.getAttributeAs<int64_t>("int_attr"));
-        assert(from_map.getAttributeAs<double>("double_attr") == original.getAttributeAs<double>("double_attr"));
-        assert(from_map.getAttributeAs<bool>("bool_attr") == original.getAttributeAs<bool>("bool_attr"));
-        // Tags are not currently in toMap, so won't be in fromMap.
-        // assert(from_map.tags == original.tags); // This assertion would fail.
+    if (!result)
+    {
 
-        // Re-adding tags to map conversion for completeness.
-        // For now, checking the core fields and attributes.
-        
-        std::cout << "testToMapRoundTrip passed" << std::endl;
+        std::cout << "JSON parsing failed: " << result.error() << std::endl;
     }
 
-    void testJsonFormatDetection() {
-        // Test ISO8601
-        std::string iso_json = R"({"timestamp": "2023-10-27T10:00:00.123Z", "level": "INFO", "message": "ISO test"})";
-        auto iso_entry_res = LogEntry::fromJson(iso_json);
-        assert(iso_entry_res.has_value());
-        assert(iso_entry_res->level == LogLevel::INFO);
-        assert(iso_entry_res->message == "ISO test");
-        // Verify time_point is set
-        assert(iso_entry_res->time_point.time_since_epoch().count() != 0);
+    assert(result.has_value());
 
-        // Test Unix Millis
-        // 2023-10-27 10:00:00.123 UTC is 1698400800123 milliseconds
-        std::string unix_json = R"({"timestamp": 1698400800123, "level": "DEBUG", "message": "UnixMillis test"})";
-        auto unix_entry_res = LogEntry::fromJson(unix_json);
-        assert(unix_entry_res.has_value());
-        assert(unix_entry_res->level == LogLevel::DEBUG);
-        assert(unix_entry_res->message == "UnixMillis test");
-        assert(unix_entry_res->time_point.time_since_epoch().count() != 0);
-        
-        // Test default format (like current generatedTimestampString)
-        std::string default_json = R"({"timestamp": "2023-10-27 10:00:00.456", "level": "WARNING", "message": "Default format test"})";
-        auto default_entry_res = LogEntry::fromJson(default_json);
-        assert(default_entry_res.has_value());
-        assert(default_entry_res->level == LogLevel::WARNING);
-        assert(default_entry_res->message == "Default format test");
-        assert(default_entry_res->time_point.time_since_epoch().count() != 0);
+    const LogEntry &entry = *result;
 
-        std::cout << "testJsonFormatDetection passed" << std::endl;
-    }
+    assert(entry.level == LogLevel::ERROR);
 
-    void testValidation() {
-        LogEntry entry;
-        assert(!entry.isValid()); // No level, no message
+    assert(entry.message == "Test deserialization");
 
-        entry.level = LogLevel::INFO;
-        assert(!entry.isValid()); // No message
+    assert(entry.timestamp == "2023-10-27 10:00:00.123");
 
-        entry.message = "Hello";
-        assert(entry.isValid()); // Has level and message
+    assert(entry.thread_id == "thread-1");
 
-        entry.level = LogLevel::UNKNOWN;
-        assert(!entry.isValid()); // Level is UNKNOWN
-        
-        std::cout << "testValidation passed" << std::endl;
-    }
+    assert(entry.trace_id == "trace-abc");
 
-    void testEnvironmentMetadata() {
-        LogEntry entry = LogEntry::create(LogLevel::INFO, "Env Test")
-            .withHost("my-server")
-            .withApp("backend-service");
+    assert(entry.span_id == "span-def");
 
-        assert(entry.host_name == "my-server");
-        assert(entry.app_name == "backend-service");
+    assert(entry.hasTag("tag1"));
 
-        std::string json = entry.toJson();
-        assert(json.find("\"host_name\": \"my-server\"") != std::string::npos);
-        assert(json.find("\"app_name\": \"backend-service\"") != std::string::npos);
+    assert(entry.hasTag("tag2"));
 
-        auto deserialized_res = LogEntry::fromJson(json);
-        assert(deserialized_res.has_value());
-        const LogEntry& deserialized = *deserialized_res;
+    assert(entry.getAttributeAsString("key1") == "value1");
 
-        assert(deserialized.host_name == "my-server");
-        assert(deserialized.app_name == "backend-service");
+    assert(std::get<int64_t>(entry.attributes.at("key2")) == 123);
 
-        std::cout << "testEnvironmentMetadata passed" << std::endl;
-    }
+    assert(std::get<bool>(entry.attributes.at("key3")) == true);
 
-    void testSeverityValue() {
-        assert(LogEntry().withLevel(LogLevel::DEBUG).getSeverityValue() == 7);
-        assert(LogEntry().withLevel(LogLevel::INFO).getSeverityValue() == 6);
-        assert(LogEntry().withLevel(LogLevel::WARNING).getSeverityValue() == 4);
-        assert(LogEntry().withLevel(LogLevel::ERROR).getSeverityValue() == 3);
-        assert(LogEntry().withLevel(LogLevel::CRITICAL).getSeverityValue() == 2);
-        assert(LogEntry().withLevel(LogLevel::UNKNOWN).getSeverityValue() == 0);
-        std::cout << "testSeverityValue passed" << std::endl;
-    }
+    // Double comparison
 
-    void testHasAttributeValue() {
-        LogEntry entry;
-        entry.withAttribute("str_key", "hello");
-        entry.withAttribute("int_key", 123LL);
-        entry.withAttribute("bool_key", true);
+    assert(std::abs(std::get<double>(entry.attributes.at("key4")) - 123.456) < 0.0001);
 
-        assert(entry.hasAttributeValue("str_key", std::string("hello")));
-        assert(!entry.hasAttributeValue("str_key", std::string("world")));
-        assert(entry.hasAttributeValue("int_key", int64_t{123}));
-        assert(!entry.hasAttributeValue("int_key", int64_t{456}));
-        assert(entry.hasAttributeValue("bool_key", true));
-        assert(!entry.hasAttributeValue("bool_key", false));
-        assert(!entry.hasAttributeValue("missing_key", std::string("any")));
-        
-        std::cout << "testHasAttributeValue passed" << std::endl;
-    }
-    
-    void testNestedData() {
+    assert(entry.source_file == "test.cpp");
+
+    assert(entry.source_function == "main");
+
+    assert(entry.source_line == 100);
+
+    // Test Round Trip
+
+    std::string serialized = entry.toJson();
+
+    auto deserialized = LogEntry::fromJson(serialized);
+
+    assert(deserialized.has_value());
+
+    assert(deserialized->message == entry.message);
+
+    assert(deserialized->tags == entry.tags);
+
+    // Note: attributes might have slightly different string representations for doubles if not carefully handled, but basic types should match.
+
+    std::cout << "testJsonDeserialization passed" << std::endl;
+}
+
+void testCloning()
+{
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Original");
+    entry.withTag("original_tag");
+
+    LogEntry clone = entry.clonedWithTag("new_tag");
+    assert(clone.hasTag("original_tag"));
+    assert(clone.hasTag("new_tag"));
+    assert(!entry.hasTag("new_tag")); // Original should be unmodified
+
+    std::cout << "testCloning passed" << std::endl;
+}
+
+void testToMapRoundTrip()
+{
+    LogEntry original = LogEntry::create(LogLevel::INFO, "Map Round Trip Test");
+    original.withAttribute("int_attr", int64_t{123})
+        .withAttribute("double_attr", 45.67)
+        .withAttribute("bool_attr", true)
+        .withTag("map_test")
+        .withProcessId(54321)
+        .withHost("test-host")
+        .withApp("test-app")
+        .withTraceContext("trace-xyz", "span-abc");
+
+    std::map<std::string, LogValue> map_repr = original.toMap();
+    LogEntry from_map = LogEntry::fromMap(map_repr);
+
+    assert(from_map.level == original.level);
+    assert(from_map.message == original.message);
+    assert(from_map.process_id == original.process_id);
+    assert(from_map.host_name == original.host_name);
+    assert(from_map.app_name == original.app_name);
+    assert(from_map.trace_id == original.trace_id);
+    assert(from_map.span_id == original.span_id);
+    assert(from_map.getAttributeAs<int64_t>("int_attr") == original.getAttributeAs<int64_t>("int_attr"));
+    assert(from_map.getAttributeAs<double>("double_attr") == original.getAttributeAs<double>("double_attr"));
+    assert(from_map.getAttributeAs<bool>("bool_attr") == original.getAttributeAs<bool>("bool_attr"));
+    // Tags are not currently in toMap, so won't be in fromMap.
+    // assert(from_map.tags == original.tags); // This assertion would fail.
+
+    // Re-adding tags to map conversion for completeness.
+    // For now, checking the core fields and attributes.
+
+    std::cout << "testToMapRoundTrip passed" << std::endl;
+}
+
+void testJsonFormatDetection()
+{
+    // Test ISO8601
+    std::string iso_json = R"({"timestamp": "2023-10-27T10:00:00.123Z", "level": "INFO", "message": "ISO test"})";
+    auto iso_entry_res = LogEntry::fromJson(iso_json);
+    assert(iso_entry_res.has_value());
+    assert(iso_entry_res->level == LogLevel::INFO);
+    assert(iso_entry_res->message == "ISO test");
+    // Verify time_point is set
+    assert(iso_entry_res->time_point.time_since_epoch().count() != 0);
+
+    // Test Unix Millis
+    // 2023-10-27 10:00:00.123 UTC is 1698400800123 milliseconds
+    std::string unix_json = R"({"timestamp": 1698400800123, "level": "DEBUG", "message": "UnixMillis test"})";
+    auto unix_entry_res = LogEntry::fromJson(unix_json);
+    assert(unix_entry_res.has_value());
+    assert(unix_entry_res->level == LogLevel::DEBUG);
+    assert(unix_entry_res->message == "UnixMillis test");
+    assert(unix_entry_res->time_point.time_since_epoch().count() != 0);
+
+    // Test default format (like current generatedTimestampString)
+    std::string default_json = R"({"timestamp": "2023-10-27 10:00:00.456", "level": "WARNING", "message": "Default format test"})";
+    auto default_entry_res = LogEntry::fromJson(default_json);
+    assert(default_entry_res.has_value());
+    assert(default_entry_res->level == LogLevel::WARNING);
+    assert(default_entry_res->message == "Default format test");
+    assert(default_entry_res->time_point.time_since_epoch().count() != 0);
+
+    std::cout << "testJsonFormatDetection passed" << std::endl;
+}
+
+void testValidation()
+{
+    LogEntry entry;
+    assert(!entry.isValid()); // No level, no message
+
+    entry.level = LogLevel::INFO;
+    assert(!entry.isValid()); // No message
+
+    entry.message = "Hello";
+    assert(entry.isValid()); // Has level and message
+
+    entry.level = LogLevel::UNKNOWN;
+    assert(!entry.isValid()); // Level is UNKNOWN
+
+    std::cout << "testValidation passed" << std::endl;
+}
+
+void testEnvironmentMetadata()
+{
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Env Test")
+                         .withHost("my-server")
+                         .withApp("backend-service");
+
+    assert(entry.host_name == "my-server");
+    assert(entry.app_name == "backend-service");
+
+    std::string json = entry.toJson();
+    assert(json.find("\"host_name\": \"my-server\"") != std::string::npos);
+    assert(json.find("\"app_name\": \"backend-service\"") != std::string::npos);
+
+    auto deserialized_res = LogEntry::fromJson(json);
+    assert(deserialized_res.has_value());
+    const LogEntry &deserialized = *deserialized_res;
+
+    assert(deserialized.host_name == "my-server");
+    assert(deserialized.app_name == "backend-service");
+
+    std::cout << "testEnvironmentMetadata passed" << std::endl;
+}
+
+void testSeverityValue()
+{
+    assert(LogEntry().withLevel(LogLevel::DEBUG).getSeverityValue() == 7);
+    assert(LogEntry().withLevel(LogLevel::INFO).getSeverityValue() == 6);
+    assert(LogEntry().withLevel(LogLevel::WARNING).getSeverityValue() == 4);
+    assert(LogEntry().withLevel(LogLevel::ERROR).getSeverityValue() == 3);
+    assert(LogEntry().withLevel(LogLevel::CRITICAL).getSeverityValue() == 2);
+    assert(LogEntry().withLevel(LogLevel::UNKNOWN).getSeverityValue() == 0);
+    std::cout << "testSeverityValue passed" << std::endl;
+}
+
+void testHasAttributeValue()
+{
+    LogEntry entry;
+    entry.withAttribute("str_key", "hello");
+    entry.withAttribute("int_key", 123LL);
+    entry.withAttribute("bool_key", true);
+
+    assert(entry.hasAttributeValue("str_key", std::string("hello")));
+    assert(!entry.hasAttributeValue("str_key", std::string("world")));
+    assert(entry.hasAttributeValue("int_key", int64_t{123}));
+    assert(!entry.hasAttributeValue("int_key", int64_t{456}));
+    assert(entry.hasAttributeValue("bool_key", true));
+    assert(!entry.hasAttributeValue("bool_key", false));
+    assert(!entry.hasAttributeValue("missing_key", std::string("any")));
+
+    std::cout << "testHasAttributeValue passed" << std::endl;
+}
+
+void testNestedData()
+{
     LogEntry entry = LogEntry::create(LogLevel::INFO, "Nested data test");
-    
-    LogList list = { "a", 1LL, true };
-    LogObject obj = { {"k1", "v1"}, {"k2", 2.2} };
-    
+
+    LogList list = {"a", 1LL, true};
+    LogObject obj = {{"k1", "v1"}, {"k2", 2.2}};
+
     entry.withAttribute("list", list);
     entry.withAttribute("obj", obj);
-    
+
     assert(entry.attributes["list"].isList());
     assert(entry.attributes["obj"].isObject());
-    
-    const LogList& l = entry.attributes["list"].asList();
+
+    const LogList &l = entry.attributes["list"].asList();
     assert(l.size() == 3);
     assert(std::get<std::string>(l[0]) == "a");
-    
-    const LogObject& o = entry.attributes["obj"].asObject();
+
+    const LogObject &o = entry.attributes["obj"].asObject();
     assert(o.at("k1") == LogValue("v1"));
-    
+
     // JSON Round Trip for nested data
     std::string json = entry.toJson();
     auto result = LogEntry::fromJson(json);
@@ -564,36 +549,38 @@ void testStreamOperator() {
     assert(result->attributes["obj"].isObject());
     assert(result->attributes["list"].asList().size() == 3);
     assert(result->attributes["obj"].asObject().at("k1") == LogValue("v1"));
-    
+
     std::cout << "testNestedData passed" << std::endl;
 }
 
-void testWithMetadata() {
+void testWithMetadata()
+{
     LogEntry entry;
     entry.level = LogLevel::INFO;
     entry.message = "Metadata test";
-    
+
     assert(entry.process_id == 0);
     assert(entry.host_name.empty());
-    
+
     entry.withMetadata();
-    
+
     assert(entry.process_id != 0);
     assert(!entry.host_name.empty());
     assert(!entry.thread_id.empty());
     assert(!entry.timestamp.empty());
-    
+
     std::cout << "testWithMetadata passed" << std::endl;
 }
 
-void testJsonOptionsIteration1() {
+void testJsonOptionsIteration1()
+{
     LogEntry entry = LogEntry::create(LogLevel::INFO, "Options test");
     entry.withAttribute("a", 1LL);
     entry.withTag("t1");
 
     LogEntry::JsonOptions opts;
     opts.exclude_empty = true;
-    
+
     // Test with content (should be there)
     std::string json = entry.toJson(opts);
     assert(json.find("\"attributes\"") != std::string::npos);
@@ -609,7 +596,7 @@ void testJsonOptionsIteration1() {
     // Test Precision
     entry.time_point = std::chrono::system_clock::now();
     opts.timestamp_format = LogEntry::TimestampFormat::ISO8601;
-    
+
     opts.precision = LogEntry::JsonOptions::Precision::Seconds;
     json = entry.toJson(opts);
     // Extract timestamp value: "timestamp": "VALUE"
@@ -618,7 +605,7 @@ void testJsonOptionsIteration1() {
     auto start = ts_pos + 14;
     auto end = json.find("\"", start);
     std::string ts_val = json.substr(start, end - start);
-    
+
     // 2023-10-27T10:00:00Z - should not have '.'
     assert(ts_val.find(".") == std::string::npos);
 
@@ -628,10 +615,10 @@ void testJsonOptionsIteration1() {
     start = ts_pos + 14;
     end = json.find("\"", start);
     ts_val = json.substr(start, end - start);
-    
+
     // .123Z - should have '.'
     assert(ts_val.find(".") != std::string::npos);
-    
+
     opts.precision = LogEntry::JsonOptions::Precision::Nanos;
     json = entry.toJson(opts);
     // .123456789Z
@@ -640,35 +627,37 @@ void testJsonOptionsIteration1() {
     std::cout << "testJsonOptionsIteration1 passed" << std::endl;
 }
 
-void testNumericConversion() {
+void testNumericConversion()
+{
     LogEntry entry;
     entry.withAttribute("int_val", 42LL);
     entry.withAttribute("uint_val", 100ULL);
-    
+
     // Exact type
     assert(entry.getAttributeAs<int64_t>("int_val") == 42);
-    
+
     // Conversion to double
     auto d_val = entry.getAttributeAs<double>("int_val");
     assert(d_val.has_value());
     assert(*d_val == 42.0);
-    
+
     auto d_val2 = entry.getAttributeAs<double>("uint_val");
     assert(d_val2.has_value());
     assert(*d_val2 == 100.0);
-    
+
     std::cout << "testNumericConversion passed" << std::endl;
 }
 
-void testIteration1Features() {
+void testIteration1Features()
+{
     std::cout << "Starting testIteration1Features..." << std::endl;
     // 1. Process ID
     uint64_t pid = LogEntry::currentProcessId();
     assert(pid != 0);
-    
+
     auto entry = LogEntry::create(LogLevel::INFO, "PID Test");
     assert(entry.process_id == pid);
-    
+
     entry.withProcessId(9999);
     assert(entry.process_id == 9999);
 
@@ -681,10 +670,8 @@ void testIteration1Features() {
 
     // 2. Attribute Management
     entry.clearAttributes();
-    entry.withAttributes({
-        {"attr1", "val1"},
-        {"attr2", 100LL}
-    });
+    entry.withAttributes({{"attr1", "val1"},
+                          {"attr2", 100LL}});
     std::map<std::string, LogValue> more_attrs = {
         {"attr3", true},
         {"attr4", std::monostate{}} // Null value
@@ -713,8 +700,9 @@ void testIteration1Features() {
     std::cout << "testIteration1Features passed" << std::endl;
 }
 
-int main() {
-    
+int main()
+{
+
     testLevelParsing();
     testLevelToString();
     testTimeParsing();
@@ -733,7 +721,7 @@ int main() {
     testEnvironmentMetadata();
     testSeverityValue();
     testHasAttributeValue();
-    
+
     testIteration1Features();
     testNestedData();
     testWithMetadata();
@@ -744,5 +732,3 @@ int main() {
 
     return 0;
 }
-    
-    

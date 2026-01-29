@@ -1,0 +1,538 @@
+{
+  "tests": 51,
+  "failures": 1,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-01-28T17:42:10Z",
+  "time": "0.042s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "LogAnalyzerTest",
+      "tests": 51,
+      "failures": 1,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-01-28T17:42:10Z",
+      "time": "0.042s",
+      "testsuite": [
+        {
+          "name": "BasicLoad",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 47,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LoadNonExistentFile",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 54,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "EmptyFile",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 60,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LoadWithStats",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 70,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "StrictModeParsing",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 78,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "MaxErrorsLimit",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 110,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "GetEntriesSpan",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 131,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "CustomFormatParsing",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 141,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "CustomTimeFormat",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 174,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LevelRangeFilter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 203,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "MultiLevelSelect",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 214,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "KeywordSearch",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 227,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "PreciseTimeFiltering",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 240,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "MetadataFiltering",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 262,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "RegexFiltering",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 287,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "InvertMatch",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 296,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ComplexFilter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 308,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "StreamAllEntries",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 324,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "StreamFilteredEntries",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 333,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "AnalyzeStream",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 346,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "StatisticsJSON",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 356,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "FilteredEntriesJSON",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 369,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LogEntryFluentAPI",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 386,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LogEntryComparison",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 400,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "AttributesAndTags",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 411,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "AsyncLoadSuccess",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 429,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "AttributeFiltering",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 454,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "TagFiltering",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 479,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "DeepStatisticsTest",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 502,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LogEntryExtraTest",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 525,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ResilienceTests",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 551,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ParsingConfigValidation",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 564,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ParsingConfigFromRegex",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 579,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "AttributeRangeFilter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 601,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "SinceFilter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 641,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest",
+          "failures": [
+            {
+              "failure": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp:649\nExpected equality of these values:\n  filtered_since.size()\n    Which is: 0\n  5\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "AnyKeywordFilter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 652,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "GetAttributeFrequency",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 669,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "GetTimeline",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 712,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "GetTrace",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 745,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "MarkdownExporter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 768,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ConsoleExporter",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 789,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ConsoleExporterWithColor",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 809,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LoadSmallFileParallel",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 825,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LoadLargeFileParallel",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 833,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0.026s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "ParallelLoadCorrectness",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 854,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0.001s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "BasicMultiLine",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 870,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "MaxContinuationLimit",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 900,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "NamedCaptureGroupsIntegration",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 946,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "CsvExportFormat",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 973,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "LogEntryJsonRoundTrip",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 988,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        },
+        {
+          "name": "PredicateComposition",
+          "file": "\/opt\/lxl\/c++\/test\/test\/LogAnalyzerTest.cpp",
+          "line": 1005,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-01-28T17:42:10Z",
+          "time": "0s",
+          "classname": "LogAnalyzerTest"
+        }
+      ]
+    }
+  ]
+}

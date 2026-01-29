@@ -11,12 +11,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # --- Core Library Component ---
 # Defines the reusable logic as a static library
 add_library(gemini-core STATIC
-    src/gemini/LogAnalyzer.cpp
-    src/gemini/LogEntry.cpp
+    src/LogAnalyzer.cpp
+    src/LogEntry.cpp
 )
 
 target_include_directories(gemini-core PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/include" # Makes headers available as <gemini/...>
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 # Apply common warning flags
@@ -37,7 +37,7 @@ find_package(GTest CONFIG REQUIRED)
 enable_testing()
 
 # LogAnalyzer Tests
-add_executable(LogAnalyzerTest test/gemini/LogAnalyzerTest.cpp)
+add_executable(LogAnalyzerTest test/LogAnalyzerTest.cpp)
 target_link_libraries(LogAnalyzerTest PRIVATE
     GTest::gtest_main
     gemini-core
@@ -45,7 +45,7 @@ target_link_libraries(LogAnalyzerTest PRIVATE
 add_test(NAME LogAnalyzerTest COMMAND LogAnalyzerTest)
 
 # LogEntry Tests
-add_executable(LogEntryTest test/gemini/LogEntryTest.cpp)
+add_executable(LogEntryTest test/LogEntryTest.cpp)
 target_link_libraries(LogEntryTest PRIVATE
     GTest::gtest_main
     gemini-core
