@@ -316,7 +316,7 @@ namespace Filters {
 std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const {
     std::unique_ptr<LogPredicate> root = nullptr;
     auto combine = [&](std::unique_ptr<LogPredicate> next) {
-        if (!root) root = Filters::And(std::move(root), std::move(next));
+        if (!root) root = std::move(next);
         else root = Filters::And(std::move(root), std::move(next));
     };
 
