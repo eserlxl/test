@@ -9,6 +9,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <condition_variable>
+#include <numeric>
 
 // --- ParsingConfig Implementation ---
 
@@ -52,6 +53,295 @@ ParsingConfig ParsingConfig::fromRegexWithNamedGroups(std::string pattern)
         config.field_mapping[name] = name; // Assume group name maps to field name
     }
     return config;
+}
+
+// --- LogQuery Implementation ---
+
+namespace LogQuery
+{
+    // Token types
+    enum class TokenType {
+        Identifier, String, Number, 
+        And, Or, Not, 
+        Eq, Neq, Gt, Lt, Gte, Lte,
+        LParen, RParen, End
+    };
+
+    struct Token {
+        TokenType type;
+        std::string value;
+    };
+
+    // Internal Predicate for LQL that handles core fields and operators
+    class FieldPredicate : public LogPredicate {
+        std::string key_;
+        TokenType op_;
+        LogValue val_;
+
+    public:
+        FieldPredicate(std::string key, TokenType op, LogValue val) 
+            : key_(std::move(key)), op_(op), val_(std::move(val)) {}
+
+        bool test(const LogEntry& entry) const override {
+            LogValue entry_val;
+            bool found = false;
+
+            // map core fields
+            if (key_ == "message") { entry_val = entry.message; found = true; }
+            else if (key_ == "timestamp") { entry_val = entry.timestamp; found = true; }
+            else if (key_ == "thread_id") { entry_val = entry.thread_id; found = true; }
+            else if (key_ == "level") { entry_val = std::string(LogEntry::levelToString(entry.level)); found = true; }
+            else if (key_ == "source_file") { entry_val = entry.source_file; found = true; }
+            else {
+                // Check attributes
+                if (auto it = entry.attributes.find(key_); it != entry.attributes.end()) {
+                    entry_val = it->second;
+                    found = true;
+                }
+            }
+
+            if (!found) return false;
+
+            // Perform comparison
+            // Simplified comparison logic. In a real system, this would be more robust (type coercion).
+            
+            // Helper for typed comparison
+            auto compare = [&](auto a, auto b) -> int {
+                if (a < b) return -1;
+                if (a > b) return 1;
+                return 0;
+            };
+
+            // String comparison
+            if (std::holds_alternative<std::string>(entry_val) && std::holds_alternative<std::string>(val_)) {
+                int cmp = std::get<std::string>(entry_val).compare(std::get<std::string>(val_));
+                return compareOp(cmp);
+            }
+            
+            // Numeric comparison
+            auto getDouble = [](const LogValue& v) -> std::optional<double> {
+                if (std::holds_alternative<double>(v)) return std::get<double>(v);
+                if (std::holds_alternative<int64_t>(v)) return static_cast<double>(std::get<int64_t>(v));
+                if (std::holds_alternative<uint64_t>(v)) return static_cast<double>(std::get<uint64_t>(v));
+                return std::nullopt;
+            };
+
+            auto d1 = getDouble(entry_val);
+            auto d2 = getDouble(val_);
+            if (d1 && d2) {
+                int cmp = 0;
+                if (*d1 < *d2) cmp = -1;
+                else if (*d1 > *d2) cmp = 1;
+                return compareOp(cmp);
+            }
+
+            // Boolean
+            if (std::holds_alternative<bool>(entry_val) && std::holds_alternative<bool>(val_)) {
+                int cmp = 0;
+                if (std::get<bool>(entry_val) == std::get<bool>(val_)) cmp = 0;
+                else cmp = (std::get<bool>(entry_val) < std::get<bool>(val_)) ? -1 : 1;
+                return compareOp(cmp);
+            }
+
+            // Fallback for equality if types mismatch or other types
+            if (op_ == TokenType::Eq) return entry_val == val_;
+            if (op_ == TokenType::Neq) return entry_val != val_;
+
+            return false;
+        }
+        
+        bool compareOp(int cmp) const {
+            switch (op_) {
+                case TokenType::Eq: return cmp == 0;
+                case TokenType::Neq: return cmp != 0;
+                case TokenType::Gt: return cmp > 0;
+                case TokenType::Lt: return cmp < 0;
+                case TokenType::Gte: return cmp >= 0;
+                case TokenType::Lte: return cmp <= 0;
+                default: return false;
+            }
+        }
+
+        std::unique_ptr<LogPredicate> clone() const override {
+            return std::make_unique<FieldPredicate>(key_, op_, val_);
+        }
+    };
+
+    class Lexer {
+        std::string_view input_;
+        size_t pos_ = 0;
+
+    public:
+        explicit Lexer(std::string_view input) : input_(input) {}
+
+        Token next() {
+            while (pos_ < input_.size() && std::isspace(input_[pos_])) pos_++;
+            
+            if (pos_ >= input_.size()) return {TokenType::End, ""};
+
+            char c = input_[pos_];
+
+            if (std::isalpha(c) || c == '_') {
+                size_t start = pos_;
+                while (pos_ < input_.size() && (std::isalnum(input_[pos_]) || input_[pos_] == '_' || input_[pos_] == '.')) {
+                    pos_++;
+                }
+                std::string word(input_.substr(start, pos_ - start));
+                if (word == "AND" || word == "and") return {TokenType::And, word};
+                if (word == "OR" || word == "or") return {TokenType::Or, word};
+                if (word == "NOT" || word == "not") return {TokenType::Not, word};
+                return {TokenType::Identifier, word};
+            }
+
+            if (std::isdigit(c) || c == '-') { // Basic number support
+                size_t start = pos_;
+                if (c == '-') pos_++;
+                while (pos_ < input_.size() && (std::isdigit(input_[pos_]) || input_[pos_] == '.')) {
+                    pos_++;
+                }
+                return {TokenType::Number, std::string(input_.substr(start, pos_ - start))};
+            }
+
+            if (c == '"' || c == '\'') {
+                char quote = c;
+                pos_++;
+                size_t start = pos_;
+                while (pos_ < input_.size() && input_[pos_] != quote) {
+                    if (input_[pos_] == '\\' && pos_ + 1 < input_.size()) pos_++;
+                    pos_++;
+                }
+                if (pos_ >= input_.size()) throw std::runtime_error("Unterminated string");
+                std::string val(input_.substr(start, pos_ - start));
+                pos_++;
+                return {TokenType::String, val};
+            }
+
+            // Operators
+            if (c == '(') { pos_++; return {TokenType::LParen, "("}; }
+            if (c == ')') { pos_++; return {TokenType::RParen, ")"}; }
+            
+            if (c == '=') {
+                pos_++;
+                if (pos_ < input_.size() && input_[pos_] == '=') { pos_++; return {TokenType::Eq, "=="}; }
+                return {TokenType::Eq, "=="}; // Allow single = as ==
+            }
+            if (c == '!') {
+                pos_++;
+                if (pos_ < input_.size() && input_[pos_] == '=') { pos_++; return {TokenType::Neq, "!="}; }
+                throw std::runtime_error("Unexpected char '!'");
+            }
+            if (c == '>') {
+                pos_++;
+                if (pos_ < input_.size() && input_[pos_] == '=') { pos_++; return {TokenType::Gte, ">="}; }
+                return {TokenType::Gt, ">"};
+            }
+            if (c == '<') {
+                pos_++;
+                if (pos_ < input_.size() && input_[pos_] == '=') { pos_++; return {TokenType::Lte, "<="}; }
+                return {TokenType::Lt, "<"};
+            }
+
+            throw std::runtime_error(std::string("Unexpected character: ") + c);
+        }
+    };
+
+    class Parser {
+        Lexer lexer_;
+        Token current_;
+
+        void advance() { current_ = lexer_.next(); }
+
+        std::unique_ptr<LogPredicate> parseFactor() {
+            if (current_.type == TokenType::Not) {
+                advance();
+                return Filters::Not(parseFactor());
+            }
+            if (current_.type == TokenType::LParen) {
+                advance();
+                auto expr = parseExpression();
+                if (current_.type != TokenType::RParen) throw std::runtime_error("Expected ')'");
+                advance();
+                return expr;
+            }
+            
+            // Comparison: Identifier Op Value
+            if (current_.type == TokenType::Identifier) {
+                std::string key = current_.value;
+                advance();
+
+                // Check for operators
+                if (current_.type == TokenType::Eq || current_.type == TokenType::Neq ||
+                    current_.type == TokenType::Gt || current_.type == TokenType::Lt ||
+                    current_.type == TokenType::Gte || current_.type == TokenType::Lte) {
+                    
+                    TokenType op = current_.type;
+                    advance();
+                    
+                    LogValue val;
+                    if (current_.type == TokenType::String) val = current_.value;
+                    else if (current_.type == TokenType::Number) {
+                         // Try parse as double
+                         try { val = std::stod(current_.value); } catch(...) { val = 0.0; }
+                    }
+                    else if (current_.type == TokenType::Identifier) {
+                        if (current_.value == "true") val = true;
+                        else if (current_.value == "false") val = false;
+                        else val = current_.value; // Treat as string
+                    } else {
+                        throw std::runtime_error("Expected value");
+                    }
+                    advance();
+
+                    // Special handling for core fields
+                    if (key == "level") {
+                         // Convert string value to standard level string for comparison if possible, or keep as is.
+                         // FieldPredicate handles level by converting entry.level to string.
+                         // So we should pass the string representation of level if the user passed a string.
+                         // If user passed "ERROR", val is "ERROR".
+                         // If user passed identifier ERROR, it might be parsed as string "ERROR" by lexer if we don't handle it.
+                         // My lexer parses identifiers as strings basically.
+                    }
+
+                    return std::make_unique<FieldPredicate>(key, op, val);
+                }
+            }
+            
+            throw std::runtime_error("Unexpected token in factor");
+        }
+
+        std::unique_ptr<LogPredicate> parseTerm() {
+            auto left = parseFactor();
+            while (current_.type == TokenType::And) {
+                advance();
+                auto right = parseFactor();
+                left = Filters::And(std::move(left), std::move(right));
+            }
+            return left;
+        }
+
+        std::unique_ptr<LogPredicate> parseExpression() {
+            auto left = parseTerm();
+            while (current_.type == TokenType::Or) {
+                advance();
+                auto right = parseTerm();
+                left = Filters::Or(std::move(left), std::move(right));
+            }
+            return left;
+        }
+
+    public:
+        Parser(std::string_view input) : lexer_(input) { advance(); }
+        std::unique_ptr<LogPredicate> parse() { return parseExpression(); }
+    };
+
+    std::expected<std::unique_ptr<LogPredicate>, std::string> compile(std::string_view query) {
+        try {
+            Parser parser(query);
+            return parser.parse();
+        } catch (const std::exception& e) {
+            return std::unexpected(e.what());
+        }
+    }
 }
 
 // --- Filters Implementation ---
@@ -451,6 +741,16 @@ std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const
     return root;
 }
 
+std::vector<LogEntry> LogAnalyzer::query(std::string_view query_str) const
+{
+    auto pred_res = LogQuery::compile(query_str);
+    if (!pred_res) {
+        std::cerr << "Query compilation failed: " << pred_res.error() << std::endl;
+        return {};
+    }
+    return getFilteredEntries(**pred_res);
+}
+
 // --- Exporters Implementation ---
 
 void JsonExporter::exportStats(const LogStatistics &stats)
@@ -589,6 +889,30 @@ void ConsoleExporter::exportEntries(std::span<const LogEntry> entries)
 }
 
 // --- LogAnalyzer Implementation ---
+
+void LogAnalyzer::createIndex(IndexType type, const std::string& attribute_name) {
+    std::unique_lock lock(rw_mutex_);
+    if (type == IndexType::Timestamp) {
+        timestamp_index_.resize(entries_.size());
+        std::iota(timestamp_index_.begin(), timestamp_index_.end(), 0);
+        std::sort(timestamp_index_.begin(), timestamp_index_.end(), [this](size_t a, size_t b) {
+            return entries_[a].time_point < entries_[b].time_point;
+        });
+    } else if (type == IndexType::Level) {
+        level_index_.clear();
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            level_index_[entries_[i].level].push_back(i);
+        }
+    } else if (type == IndexType::Attribute && !attribute_name.empty()) {
+        auto& idx = attribute_indices_[attribute_name];
+        idx.clear();
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            if (auto val = entries_[i].getAttribute(attribute_name)) {
+                idx[*val].push_back(i);
+            }
+        }
+    }
+}
 
 LogAnalyzer::LogAnalyzer() : rw_mutex_()
 {
@@ -1410,3 +1734,150 @@ std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate &predic
 }
 
 std::string LogAnalyzer::levelToString(LogLevel level) const { return std::string(LogEntry::levelToString(level)); }
+
+std::expected<NumericStats, std::string> LogAnalyzer::analyzeMetric(
+    std::string_view attribute_key, 
+    const std::vector<int>& percentiles
+) const {
+    std::shared_lock lock(rw_mutex_);
+    std::vector<double> values;
+    std::string key(attribute_key);
+    
+    for (const auto& entry : entries_) {
+        if (auto val = entry.getAttribute(key)) {
+             if (std::holds_alternative<double>(*val)) values.push_back(std::get<double>(*val));
+             else if (std::holds_alternative<int64_t>(*val)) values.push_back(static_cast<double>(std::get<int64_t>(*val)));
+             else if (std::holds_alternative<uint64_t>(*val)) values.push_back(static_cast<double>(std::get<uint64_t>(*val)));
+        }
+    }
+
+    if (values.empty()) return std::unexpected("No numeric values found for attribute");
+
+    std::sort(values.begin(), values.end());
+    
+    NumericStats stats;
+    stats.min = values.front();
+    stats.max = values.back();
+    double sum = 0;
+    for(double v : values) sum += v;
+    stats.avg = sum / values.size();
+    
+    double sq_sum = 0;
+    for(double v : values) sq_sum += (v - stats.avg) * (v - stats.avg);
+    stats.std_dev = std::sqrt(sq_sum / values.size());
+
+    for (int p : percentiles) {
+        if (p < 0 || p > 100) continue;
+        size_t idx = (size_t)std::ceil((p / 100.0) * values.size()) - 1;
+        if (idx >= values.size()) idx = values.size() - 1;
+        stats.percentiles[p] = values[idx];
+    }
+    
+    return stats;
+}
+
+std::generator<LogEntry> LogAnalyzer::tailFile(
+    std::filesystem::path filepath, 
+    std::chrono::milliseconds polling_interval
+) {
+    std::ifstream file(filepath, std::ios::ate); // Start at end
+    if (!file.is_open()) throw std::runtime_error("Could not open file for tailing");
+    
+    auto last_pos = file.tellg();
+    std::string buffer;
+    
+    while (true) {
+        file.clear(); // Clear EOF flags
+        file.seekg(last_pos);
+        
+        std::string line;
+        while (std::getline(file, line)) {
+            bool is_new = true;
+            if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
+            
+            if (is_new && !buffer.empty()) {
+                LogEntry entry = parseLogLine(buffer);
+                applyEnrichers(entry);
+                co_yield entry;
+                buffer = line;
+            } else {
+                if (!buffer.empty()) buffer += "\n";
+                buffer += line;
+            }
+        }
+        last_pos = file.tellg();
+        
+        std::this_thread::sleep_for(polling_interval);
+        // Note: Generator cancellation handles the loop break via destructor
+    }
+}
+
+std::expected<void, std::string> LogAnalyzer::saveState(const std::filesystem::path& path) const {
+    std::shared_lock lock(rw_mutex_);
+    try {
+        std::ofstream out(path, std::ios::binary);
+        if (!out) return std::unexpected("Could not open file for writing");
+        
+        // Header "LOGA" + Version 1
+        out.write("LOGA", 4);
+        uint32_t version = 1;
+        out.write(reinterpret_cast<char*>(&version), sizeof(version));
+        
+        uint64_t count = entries_.size();
+        out.write(reinterpret_cast<char*>(&count), sizeof(count));
+        
+        for (const auto& entry : entries_) {
+            // Very simple serialization for demo
+            // Serialize Map
+            auto map = entry.toMap();
+            std::string json = entry.toJson(); // Use JSON as intermediate binary payload for simplicity in this iteration
+            uint32_t size = json.size();
+            out.write(reinterpret_cast<char*>(&size), sizeof(size));
+            out.write(json.data(), size);
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected(e.what());
+    }
+    return {};
+}
+
+std::expected<void, std::string> LogAnalyzer::loadState(const std::filesystem::path& path) {
+    std::unique_lock lock(rw_mutex_);
+    try {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return std::unexpected("Could not open file for reading");
+        
+        char magic[4];
+        in.read(magic, 4);
+        if (strncmp(magic, "LOGA", 4) != 0) return std::unexpected("Invalid file format");
+        
+        uint32_t version;
+        in.read(reinterpret_cast<char*>(&version), sizeof(version));
+        
+        uint64_t count;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+        
+        entries_.clear();
+        entries_.reserve(count);
+        
+        for (uint64_t i = 0; i < count; ++i) {
+            uint32_t size;
+            in.read(reinterpret_cast<char*>(&size), sizeof(size));
+            std::string json(size, '\0');
+            in.read(json.data(), size);
+            
+            auto res = LogEntry::fromJson(json);
+            if (res) entries_.push_back(std::move(*res));
+        }
+        cached_stats_.reset();
+    } catch (const std::exception& e) {
+        return std::unexpected(e.what());
+    }
+    return {};
+}
+
+void LogAnalyzer::rebuildIndices() {
+    // Rebuild all declared indices
+    // Not implemented fully as we don't track which indices were created.
+    // In a real system, we'd store the configured indices.
+}

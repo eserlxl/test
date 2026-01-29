@@ -113,6 +113,21 @@ public:
     virtual std::unique_ptr<LogPredicate> clone() const = 0;
 };
 
+// Iteration 2: Log Query Language
+namespace LogQuery {
+    // Compiles a string query into a predicate
+    std::expected<std::unique_ptr<LogPredicate>, std::string> compile(std::string_view query);
+}
+
+// Iteration 2: Numeric Analytics
+struct NumericStats {
+    double min = 0.0;
+    double max = 0.0;
+    double avg = 0.0;
+    double std_dev = 0.0;
+    std::map<int, double> percentiles; // e.g., {50: 120.0, 99: 500.0}
+};
+
 namespace Filters {
     std::unique_ptr<LogPredicate> Level(LogLevel l);
     std::unique_ptr<LogPredicate> Keyword(std::string k, bool case_sensitive = true);
@@ -227,6 +242,12 @@ public:
 
 class LogAnalyzer {
 public:
+    enum class IndexType {
+        Timestamp,
+        Level,
+        Attribute
+    };
+
     LogAnalyzer();
     
     // Configuration
@@ -251,6 +272,10 @@ public:
         ParallelConfig config = {}
     );
 
+    // Iteration 2: Binary Serialization
+    std::expected<void, std::string> saveState(const std::filesystem::path& path) const;
+    std::expected<void, std::string> loadState(const std::filesystem::path& path);
+
     // Legacy Loading
     bool loadLogFile(const std::string& filepath);
     bool loadLogFile(const std::filesystem::path& filepath);
@@ -260,8 +285,22 @@ public:
     std::generator<LogEntry> streamFilteredEntries(std::filesystem::path filepath, FilterOptions options);
     std::generator<LogEntry> streamFilteredEntries(std::filesystem::path filepath, const LogPredicate& predicate);
 
+    // Iteration 2: Real-time Tailing
+    // yield entries as they are written to the file
+    // blocks waiting for new data until stop_token is cancelled (conceptually, generator handles cancellation via iterator destruction)
+    std::generator<LogEntry> tailFile(
+        std::filesystem::path filepath, 
+        std::chrono::milliseconds polling_interval = std::chrono::milliseconds(100)
+    );
+
     // Analysis
     std::expected<LogStatistics, std::string> analyzeStream(const std::filesystem::path& filepath);
+
+    // Iteration 2: Advanced Analytics
+    std::expected<NumericStats, std::string> analyzeMetric(
+        std::string_view attribute_key, 
+        const std::vector<int>& percentiles = {50, 90, 95, 99}
+    ) const;
 
     std::map<LogValue, size_t> getAttributeFrequency(std::string_view attr_key) const;
     std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> getTimeline(std::chrono::system_clock::duration bucket_size) const;
@@ -286,6 +325,13 @@ public:
     void sort(std::function<bool(const LogEntry&, const LogEntry&)> cmp);
     void removeIf(const LogPredicate& predicate);
     void transform(std::function<void(LogEntry&)> transformer);
+
+    // Iteration 2: LQL and Indexing
+    // Convenience wrapper using LQL
+    std::vector<LogEntry> query(std::string_view query_str) const;
+    
+    // Builds an index for a specific field/attribute
+    void createIndex(IndexType type, const std::string& attribute_name = "");
 
     // Output
     // Legacy Output (kept for backward compatibility, will wrap new methods)
@@ -321,6 +367,14 @@ private:
     std::map<std::string, int> named_group_indices_;
     mutable std::shared_mutex rw_mutex_; // Changed to shared_mutex
     mutable std::optional<LogStatistics> cached_stats_; // For caching statistics
+
+    // Iteration 2: Indices
+    mutable std::vector<size_t> timestamp_index_; // Indices sorted by time
+    mutable std::map<LogLevel, std::vector<size_t>> level_index_;
+    mutable std::map<std::string, std::map<LogValue, std::vector<size_t>>> attribute_indices_;
+    
+    // Helper to rebuild indices (if they exist)
+    void rebuildIndices();
 };
 
 #endif // LOG_ANALYZER_H
