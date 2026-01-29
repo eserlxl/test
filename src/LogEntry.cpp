@@ -14,16 +14,105 @@
 #include <unistd.h>
 #endif
 
-const LogEntry::JsonOptions LogEntry::defaultJsonOptions; // Initializes with all defaults
+static std::string base64_encode(const std::vector<std::byte>& data) {
+    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string ret;
+    int i = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+
+    for (auto b : data) {
+        char_array_3[i++] = static_cast<unsigned char>(b);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for(i = 0; (i <4) ; i++)
+                ret += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        int j = 0;
+        for(j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; (j < i + 1); j++)
+            ret += base64_chars[char_array_4[j]];
+
+        while((i++ < 3))
+            ret += '=';
+    }
+
+    return ret;
+}
+
+static std::vector<std::byte> base64_decode(std::string_view const& encoded_string) {
+    static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    auto is_base64 = [](unsigned char c) -> bool {
+        return (isalnum(c) || (c == '+') || (c == '/'));
+    };
+
+    int in_len = encoded_string.size();
+    int i = 0;
+    int in_ = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    std::vector<std::byte> ret;
+
+    while (in_len-- && ( encoded_string[in_] != '=') && is_base64(static_cast<unsigned char>(encoded_string[in_]))) {
+        char_array_4[i++] = encoded_string[in_]; in_++;
+        if (i == 4) {
+            for (i = 0; i <4; i++)
+                char_array_4[i] = static_cast<unsigned char>(base64_chars.find(char_array_4[i]));
+
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+            for (i = 0; (i < 3); i++)
+                ret.push_back(static_cast<std::byte>(char_array_3[i]));
+            i = 0;
+        }
+    }
+
+    if (i) {
+        int j = 0;
+        for (j = i; j <4; j++)
+            char_array_4[j] = 0;
+
+        for (j = 0; j <4; j++)
+            char_array_4[j] = static_cast<unsigned char>(base64_chars.find(char_array_4[j]));
+
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+        for (j = 0; (j < i - 1); j++) ret.push_back(static_cast<std::byte>(char_array_3[j]));
+    }
+
+    return ret;
+}
+
+const LogEntry::JsonOptions LogEntry::defaultJsonOptions;
 
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
 
 // LogValue helpers
 LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
 LogValue::LogValue(LogObject obj) : LogValueBase(std::make_shared<LogObject>(std::move(obj))) {}
+LogValue::LogValue(LogBinary bin) : LogValueBase(std::move(bin)) {}
 
 bool LogValue::isList() const { return std::holds_alternative<std::shared_ptr<LogList>>(*this); }
 bool LogValue::isObject() const { return std::holds_alternative<std::shared_ptr<LogObject>>(*this); }
+bool LogValue::isBinary() const { return std::holds_alternative<LogBinary>(*this); }
 
 const LogList &LogValue::asList() const
 {
@@ -33,6 +122,63 @@ const LogList &LogValue::asList() const
 const LogObject &LogValue::asObject() const
 {
     return *std::get<std::shared_ptr<LogObject>>(*this);
+}
+
+const LogBinary &LogValue::asBinary() const
+{
+    return std::get<LogBinary>(*this);
+}
+
+std::optional<LogValue> LogValue::find(std::string_view path) const
+{
+    if (path.empty()) return *this;
+
+    size_t dot_pos = path.find('.');
+    std::string_view head = path.substr(0, dot_pos);
+    std::string_view tail = (dot_pos == std::string_view::npos) ? "" : path.substr(dot_pos + 1);
+
+    if (isObject()) {
+        const auto& obj = asObject();
+        auto it = obj.find(std::string(head));
+        if (it != obj.end()) {
+            return it->second.find(tail);
+        }
+    } else if (isList()) {
+        const auto& list = asList();
+        try {
+            size_t index = std::stoul(std::string(head));
+            if (index < list.size()) {
+                return list[index].find(tail);
+            }
+        } catch (...) {}
+    }
+
+    return std::nullopt;
+}
+
+LogValue& LogValue::operator[](std::string_view key)
+{
+    if (std::holds_alternative<std::monostate>(*this)) {
+        *this = LogObject{};
+    }
+
+    if (isObject()) {
+        auto& obj = const_cast<LogObject&>(asObject());
+        return obj[std::string(key)];
+    }
+    throw std::runtime_error("LogValue is not an object");
+}
+
+LogValue& LogValue::operator[](size_t index)
+{
+    if (isList()) {
+        auto& list = const_cast<LogList&>(asList());
+        if (index < list.size()) {
+            return list[index];
+        }
+        throw std::out_of_range("LogValue list index out of range");
+    }
+    throw std::runtime_error("LogValue is not a list");
 }
 
 LogLevel LogEntry::parseLevel(std::string_view level_str)
@@ -260,6 +406,55 @@ LogEntry &LogEntry::withTraceContext(std::string_view tid, std::string_view sid)
     trace_id = tid;
     span_id = sid;
     return *this;
+}
+
+LogEntry &LogEntry::withResource(std::string key, LogValue value)
+{
+    resources[std::move(key)] = std::move(value);
+    return *this;
+}
+
+LogEntry &LogEntry::withResources(const std::map<std::string, LogValue> &res)
+{
+    for (const auto &[key, value] : res)
+    {
+        resources[key] = value;
+    }
+    return *this;
+}
+
+LogEntry &LogEntry::withEnvironment()
+{
+    const char* env_vars[] = {"USER", "USERNAME", "HOSTNAME", "PATH", "PWD", "HOME", "LANG"};
+    for (const char* var : env_vars) {
+        if (const char* val = getenv(var)) {
+            withResource(std::string("env.") + var, std::string(val));
+        }
+    }
+    return *this;
+}
+
+LogEntry &LogEntry::withSystemInfo()
+{
+    withResource("sys.cpu_count", static_cast<int64_t>(std::thread::hardware_concurrency()));
+#if defined(_WIN32) || defined(_WIN64)
+    withResource("sys.os", std::string("Windows"));
+#elif defined(__linux__)
+    withResource("sys.os", std::string("Linux"));
+#elif defined(__APPLE__)
+    withResource("sys.os", std::string("macOS"));
+#else
+    withResource("sys.os", std::string("unknown"));
+#endif
+    return *this;
+}
+
+std::string LogEntry::summary() const
+{
+    return std::format("[{}] [{}] {}", 
+        timestamp.empty() ? generatedTimestampString() : timestamp, 
+        levelToString(level), 
+        message);
 }
 
 LogEntry &LogEntry::removeAttribute(const std::string &key)
@@ -607,6 +802,31 @@ static std::expected<LogValue, std::string> parseLogValue(std::string_view::iter
         return parseJsonString(it, end);
     case '{':
     {
+        // Check for binary data format {"$binary": "base64_string"}
+        auto current_it = it;
+        current_it = skipWhitespace(current_it, end);
+        if (current_it != end && *current_it == '{') {
+            ++current_it; // Skip '{'
+            current_it = skipWhitespace(current_it, end);
+            if (current_it != end && *current_it == '"') {
+                auto key_res = parseJsonString(current_it, end);
+                if (key_res && *key_res == "$binary") {
+                    current_it = skipWhitespace(current_it, end);
+                    if (current_it != end && *current_it == ':') {
+                        ++current_it; // Skip ':'
+                        auto base64_str_res = parseJsonString(current_it, end);
+                        if (base64_str_res) {
+                            current_it = skipWhitespace(current_it, end);
+                            if (current_it != end && *current_it == '}') {
+                                it = current_it + 1; // Advance main iterator past the object
+                                return LogValue(base64_decode(*base64_str_res));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // If not a binary object, parse as a regular object
         auto obj_res = parseJsonObject(it, end);
         if (!obj_res)
             return std::unexpected(obj_res.error());
@@ -857,6 +1077,10 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
                 }
             }
         }
+        else if (key == "resources" && std::holds_alternative<std::shared_ptr<LogObject>>(value))
+        {
+             entry.resources = *std::get<std::shared_ptr<LogObject>>(value);
+        }
         else
         {
             // Treat everything else as an attribute
@@ -897,6 +1121,11 @@ std::map<std::string, LogValue> LogEntry::toMap() const
         for (const auto &tag : tags)
             tagList.push_back(tag);
         m["tags"] = LogValue(std::move(tagList));
+    }
+    
+    if (!resources.empty())
+    {
+        m["resources"] = LogValue(resources);
     }
 
     for (const auto &[key, value] : attributes)
@@ -1153,6 +1382,13 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
                 return std::unexpected("Failed to parse attributes: " + val_res.error());
             entry.attributes = std::move(*val_res);
         }
+        else if (key == "resources")
+        {
+            auto val_res = parseJsonObject(it, end);
+            if (!val_res)
+                return std::unexpected("Failed to parse resources: " + val_res.error());
+            entry.resources = std::move(*val_res);
+        }
         else
         {
             // Skip unknown key's value
@@ -1253,6 +1489,9 @@ struct JsonVisitor
     void operator()(uint64_t u) const { os << u; }
     void operator()(double d) const { os << d; }
     void operator()(const std::string &s) const { os << "\"" << escapeJson(s) << "\""; }
+    void operator()(const LogBinary &b) const {
+        os << "{\"$binary\": \"" << base64_encode(b) << "\"}";
+    }
 
     void operator()(const std::shared_ptr<LogList> &list) const
     {
@@ -1444,6 +1683,28 @@ std::string LogEntry::toJson(const JsonOptions &options) const
         else if (!options.exclude_empty)
         {
             oss << "," << nl << indent << "\"attributes\": {}";
+        }
+    }
+
+    if (options.include_resources && (!resources.empty() || !options.exclude_empty))
+    {
+        if (!resources.empty())
+        {
+            oss << "," << nl << indent << "\"resources\": {" << nl;
+            bool first = true;
+            for (const auto &[key, value] : resources)
+            {
+                if (!first)
+                    oss << "," << nl;
+                oss << indent << indent << "\"" << escapeJson(key) << "\": ";
+                std::visit(JsonVisitor{oss, options, 1}, value);
+                first = false;
+            }
+            oss << nl << indent << "}";
+        }
+        else if (!options.exclude_empty)
+        {
+            oss << "," << nl << indent << "\"resources\": {}";
         }
     }
 

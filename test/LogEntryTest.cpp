@@ -700,6 +700,152 @@ void testIteration1Features()
     std::cout << "testIteration1Features passed" << std::endl;
 }
 
+void testBinaryLogValue() {
+    std::vector<std::byte> binaryData = {std::byte{0x01}, std::byte{0x02}, std::byte{0xFF}};
+    LogValue binaryVal(binaryData);
+
+    assert(binaryVal.isBinary());
+    assert(binaryVal.asBinary() == binaryData);
+
+    // Test LogEntry with binary data
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Binary data test");
+    entry.withAttribute("payload", binaryVal);
+
+    std::string json = entry.toJson();
+    std::cout << "Binary JSON: " << json << std::endl;
+    // Expected: {"$binary": "AQID/w=="} (base64 of 0102FF)
+    assert(json.find("\"payload\": {\"$binary\": \"AQID/w==\"}") != std::string::npos);
+
+    // Test deserialization
+    auto deserialized = LogEntry::fromJson(json);
+    assert(deserialized.has_value());
+    assert(deserialized->hasAttribute("payload"));
+    assert(deserialized->getAttribute("payload")->isBinary());
+    assert(deserialized->getAttribute("payload")->asBinary() == binaryData);
+
+    // Test base64 round trip for binary data in LogValue::find
+    LogEntry entry_with_nested_binary = LogEntry::create(LogLevel::INFO, "Nested binary");
+    LogObject nested_obj;
+    nested_obj["key"] = LogValue(binaryData);
+    entry_with_nested_binary.withAttribute("data", nested_obj);
+    
+    std::string nested_json = entry_with_nested_binary.toJson();
+    auto deserialized_nested = LogEntry::fromJson(nested_json);
+    assert(deserialized_nested.has_value());
+    auto found_binary = deserialized_nested->getAttribute("data")->find("key");
+    assert(found_binary.has_value());
+    assert(found_binary->isBinary());
+    assert(found_binary->asBinary() == binaryData);
+
+
+    std::cout << "testBinaryLogValue passed" << std::endl;
+}
+
+void testLogValueNavigation() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Navigation test");
+    LogObject user_profile;
+    user_profile["id"] = 123LL;
+    user_profile["name"] = "testUser";
+    
+    LogList permissions = {"read", "write"};
+    user_profile["permissions"] = LogValue(permissions);
+
+    entry.withAttribute("user", user_profile);
+    
+    // Test find
+    assert(entry.getAttribute("user")->find("id")->as<int64_t>().value() == 123LL);
+    assert(entry.getAttribute("user")->find("name")->as<std::string>().value() == "testUser");
+    assert(entry.getAttribute("user")->find("permissions.0")->as<std::string>().value() == "read");
+    assert(entry.getAttribute("user")->find("permissions.1")->as<std::string>().value() == "write");
+    assert(!entry.getAttribute("user")->find("permissions.2").has_value()); // Out of bounds
+
+    // Test operator[]
+    LogValue& userId = (*entry.getAttribute("user"))["id"];
+    assert(userId.as<int64_t>().value() == 123LL);
+
+    LogValue& perm0 = (*entry.getAttribute("user")->find("permissions"))[0];
+    assert(perm0.as<std::string>().value() == "read");
+
+    // Test operator[] for modification
+    (*entry.getAttribute("user"))["id"] = 456LL;
+    assert(entry.getAttribute("user")->find("id")->as<int64_t>().value() == 456LL);
+
+    // Test operator[] for new key (auto-creation)
+    (*entry.getAttribute("user"))["email"] = "test@example.com";
+    assert(entry.getAttribute("user")->find("email")->as<std::string>().value() == "test@example.com");
+
+    std::cout << "testLogValueNavigation passed" << std::endl;
+}
+
+void testResourceAttributes() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Resource test");
+    entry.withResource("service.name", "my-app")
+         .withResource("host.arch", "x86_64");
+
+    assert(entry.resources.at("service.name").as<std::string>().value() == "my-app");
+    assert(entry.resources.at("host.arch").as<std::string>().value() == "x86_64");
+
+    // Test withResources
+    std::map<std::string, LogValue> more_resources = {
+        {"cloud.provider", "aws"},
+        {"cloud.region", "us-east-1"}
+    };
+    entry.withResources(more_resources);
+
+    assert(entry.resources.at("cloud.provider").as<std::string>().value() == "aws");
+
+    std::string json = entry.toJson();
+    std::cout << "Resource JSON: " << json << std::endl;
+    assert(json.find("\"resources\": {\"cloud.provider\": \"aws\", \"cloud.region\": \"us-east-1\", \"host.arch\": \"x86_64\", \"service.name\": \"my-app\"}") != std::string::npos);
+
+    // Test deserialization
+    auto deserialized = LogEntry::fromJson(json);
+    assert(deserialized.has_value());
+    assert(deserialized->resources.at("service.name").as<std::string>().value() == "my-app");
+    assert(deserialized->resources.at("cloud.region").as<std::string>().value() == "us-east-1");
+    
+    // Test that resources are not included if include_resources is false
+    LogEntry::JsonOptions opts;
+    opts.include_resources = false;
+    std::string no_res_json = entry.toJson(opts);
+    assert(no_res_json.find("\"resources\"") == std::string::npos);
+
+    std::cout << "testResourceAttributes passed" << std::endl;
+}
+
+void testAutomatedContextCapture() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Auto context test");
+    entry.withEnvironment();
+    entry.withSystemInfo();
+
+    // Environment checks (basic)
+    assert(entry.resources.count("env.USER") || entry.resources.count("env.USERNAME"));
+    assert(entry.resources.count("env.HOSTNAME"));
+
+    // System info checks (basic)
+    assert(entry.resources.count("sys.cpu_count"));
+    assert(entry.resources.count("sys.os"));
+
+    std::string json = entry.toJson();
+    std::cout << "Auto Context JSON: " << json << std::endl;
+    assert(json.find("\"resources\": {") != std::string::npos);
+    assert(json.find("\"env.HOSTNAME\"") != std::string::npos);
+    assert(json.find("\"sys.cpu_count\"") != std::string::npos);
+    assert(json.find("\"sys.os\"") != std::string::npos);
+
+    std::cout << "testAutomatedContextCapture passed" << std::endl;
+}
+
+void testSummary() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "This is a test message");
+    entry.withTimestamp(std::chrono::system_clock::from_time_t(0)); // Jan 1, 1970
+    
+    std::string expected_summary = "[1970-01-01 00:00:00.000] [INFO] This is a test message";
+    assert(entry.summary() == expected_summary);
+
+    std::cout << "testSummary passed" << std::endl;
+}
+
 int main()
 {
 
@@ -721,13 +867,18 @@ int main()
     testEnvironmentMetadata();
     testSeverityValue();
     testHasAttributeValue();
-
-    testIteration1Features();
     testNestedData();
     testWithMetadata();
     testJsonOptionsIteration1();
     testNumericConversion();
 
+    // New tests for Iteration 1 features
+    testBinaryLogValue();
+    testLogValueNavigation();
+    testResourceAttributes();
+    testAutomatedContextCapture();
+    testSummary();
+    
     std::cout << "All LogEntry tests passed!" << std::endl;
 
     return 0;

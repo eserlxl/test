@@ -37,10 +37,13 @@ inline bool isError(LogLevel level) noexcept {
     return level == LogLevel::ERROR || level == LogLevel::CRITICAL;
 }
 
+#include <cstddef> // for std::byte
+
 // Supported types for structured data
 struct LogValue;
 using LogList = std::vector<LogValue>;
 using LogObject = std::map<std::string, LogValue>;
+using LogBinary = std::vector<std::byte>;
 
 using LogValueBase = std::variant<
     std::monostate,
@@ -49,6 +52,7 @@ using LogValueBase = std::variant<
     uint64_t,
     double,
     std::string,
+    LogBinary,
     std::shared_ptr<LogList>,
     std::shared_ptr<LogObject>
 >;
@@ -59,12 +63,35 @@ struct LogValue : LogValueBase {
     // Helper constructors
     LogValue(LogList list);
     LogValue(LogObject obj);
+    LogValue(LogBinary bin);
     
     // Explicit conversion helpers
     bool isList() const;
     bool isObject() const;
+    bool isBinary() const;
     const LogList& asList() const;
     const LogObject& asObject() const;
+    const LogBinary& asBinary() const;
+
+    template<typename T>
+    std::optional<T> as() const {
+        if (std::holds_alternative<T>(*this)) {
+            return std::get<T>(*this);
+        }
+        // Handle numeric conversions for floating point types
+        if constexpr (std::is_floating_point_v<T>) {
+            if (std::holds_alternative<int64_t>(*this)) 
+                return static_cast<T>(std::get<int64_t>(*this));
+            if (std::holds_alternative<uint64_t>(*this)) 
+                return static_cast<T>(std::get<uint64_t>(*this));
+        }
+        return std::nullopt;
+    }
+
+    // Navigation (Iteration 1)
+    std::optional<LogValue> find(std::string_view path) const;
+    LogValue& operator[](std::string_view key);
+    LogValue& operator[](size_t index);
 };
 
 struct LogEntry {
@@ -77,12 +104,13 @@ struct LogEntry {
         bool include_source = true;
         bool include_thread = true;
         bool include_tracing = true;
-        bool exclude_empty = false; // New: skip empty attributes/tags
+        bool include_resources = true; // New: include resource attributes
+        bool exclude_empty = false; 
         TimestampFormat timestamp_format = TimestampFormat::Default;
-        Precision precision = Precision::Millis; // New: configurable precision
+        Precision precision = Precision::Millis; 
     };
 
-    static const JsonOptions defaultJsonOptions; // New: Default options for JSON serialization
+    static const JsonOptions defaultJsonOptions; 
 
     // Existing fields (Public API Compat)
     std::string timestamp;
@@ -94,9 +122,9 @@ struct LogEntry {
     std::chrono::system_clock::time_point time_point;
 
     // Context info
-    uint64_t process_id = 0; // Iteration 1
-    std::string host_name;   // New: Host name
-    std::string app_name;    // New: Application/Service name
+    uint64_t process_id = 0; 
+    std::string host_name;   
+    std::string app_name;    
     std::string source_file;
     std::string source_function;
     int source_line = 0;
@@ -107,9 +135,9 @@ struct LogEntry {
     std::string span_id;
 
     // Structured data
-    // BREAKING CHANGE: attributes now stores variants
     std::map<std::string, LogValue> attributes;
-    std::set<std::string, std::less<>> tags; // Use transparent comparator
+    std::map<std::string, LogValue> resources; // New: Environmental attributes
+    std::set<std::string, std::less<>> tags; 
 
     // Constructors
     LogEntry();
@@ -117,13 +145,13 @@ struct LogEntry {
     // Static helpers
     static LogLevel parseLevel(std::string_view level_str);
     static std::string_view levelToString(LogLevel level);
-    static uint64_t currentProcessId(); // Iteration 1
-    static std::string currentHostName(); // Iteration 1
+    static uint64_t currentProcessId(); 
+    static std::string currentHostName(); 
 
     // Factory methods
     static LogEntry create(LogLevel level, std::string_view message, 
                           std::source_location loc = std::source_location::current());
-    static LogEntry fromMap(const std::map<std::string, LogValue>& data); // Iteration 1
+    static LogEntry fromMap(const std::map<std::string, LogValue>& data); 
     
     // JSON Deserialization
     static std::expected<LogEntry, std::string> fromJson(std::string_view json_str);
@@ -131,13 +159,17 @@ struct LogEntry {
     // Fluent API
     LogEntry& withLevel(LogLevel l);
     LogEntry& withMessage(std::string_view msg);
-    LogEntry& withMetadata(); // Captures PID, Host, App, Thread, and Time if not set
+    LogEntry& withMetadata(); 
     LogEntry& withAttribute(std::string key, LogValue value);
-    LogEntry& withAttributes(std::initializer_list<std::pair<const std::string, LogValue>> attrs); // Iteration 1
-    LogEntry& withAttributes(const std::map<std::string, LogValue>& attrs); // Iteration 1
-    LogEntry& withProcessId(uint64_t pid); // Iteration 1
-    LogEntry& withHost(std::string_view host); // Iteration 1
-    LogEntry& withApp(std::string_view app);   // Iteration 1
+    LogEntry& withAttributes(std::initializer_list<std::pair<const std::string, LogValue>> attrs); 
+    LogEntry& withAttributes(const std::map<std::string, LogValue>& attrs); 
+    LogEntry& withResource(std::string key, LogValue value); // New
+    LogEntry& withResources(const std::map<std::string, LogValue>& res); // New
+    LogEntry& withEnvironment(); // New
+    LogEntry& withSystemInfo(); // New
+    LogEntry& withProcessId(uint64_t pid); 
+    LogEntry& withHost(std::string_view host); 
+    LogEntry& withApp(std::string_view app);   
     LogEntry& withThreadId(std::string_view tid);
     LogEntry& withThreadId(std::thread::id tid);
     LogEntry& withTimestamp(std::chrono::system_clock::time_point tp, bool include_fractional = true);
@@ -148,22 +180,24 @@ struct LogEntry {
     LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
 
     // Attribute manipulation
-    LogEntry& removeAttribute(const std::string& key); // Iteration 1
-    LogEntry& clearAttributes(); // Iteration 1
-    LogEntry& mergeAttributes(const LogEntry& other); // Iteration 1
+    LogEntry& removeAttribute(const std::string& key); 
+    LogEntry& clearAttributes(); 
+    LogEntry& mergeAttributes(const LogEntry& other); 
 
     LogEntry clonedWithTag(std::string_view tag) const;
 
     // Methods
     bool parseTime();
     std::string generatedTimestampString(bool include_fractional = true) const;
-    void setAttribute(const std::string& key, const std::string& value); // Compat shim
-    void setAttribute(const std::string& key, const char* value); // Ambiguity resolver
-    void setAttribute(const std::string& key, LogValue value); // New overload
-    std::string getAttributeAsString(const std::string& key) const; // Helper
+    void setAttribute(const std::string& key, const std::string& value); 
+    void setAttribute(const std::string& key, const char* value); 
+    void setAttribute(const std::string& key, LogValue value); 
+    std::string getAttributeAsString(const std::string& key) const; 
     
     bool hasAttribute(const std::string& key) const;
     std::optional<LogValue> getAttribute(const std::string& key) const;
+    
+    std::string summary() const; // New
     
     template<typename T>
     std::optional<T> getAttributeAs(const std::string& key) const {
