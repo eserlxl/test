@@ -529,8 +529,8 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
     const std::filesystem::path& filepath,
     ProgressCallback progress
 ) {
-    entries_.clear();
     LoadResult result = {0, 0};
+    std::vector<LogEntry> new_entries;
     
     try {
         std::ifstream file(filepath, std::ios::ate | std::ios::binary);
@@ -555,7 +555,7 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
                 result.error_count++;
             } else {
                 applyEnrichers(entry);
-                entries_.push_back(std::move(entry));
+                new_entries.push_back(std::move(entry));
                 result.loaded_count++;
             }
             current_entry_buffer.clear();
@@ -606,6 +606,12 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
 
         if (progress) progress({bytes_processed, total_bytes, line_number});
         
+        {
+            std::unique_lock lock(rw_mutex_);
+            entries_ = std::move(new_entries);
+            cached_stats_.reset();
+        }
+        
     } catch (const std::exception& e) {
         return std::unexpected(e.what());
     }
@@ -633,74 +639,81 @@ std::future<LoadResult> LogAnalyzer::loadFileAsync(
 std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, ParallelConfig config) {
     return std::async(std::launch::async, [this, path, config]() -> LoadResult {
         {
-            std::lock_guard lock(entries_mutex_);
-            entries_.clear(); 
+            std::unique_lock lock(rw_mutex_);
+            entries_.clear();
+            cached_stats_.reset();
         }
+
         std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) throw std::runtime_error("Could not open file");
+        if (!file.is_open()) throw std::runtime_error("Could not open file: " + path.string());
         
         size_t total_size = file.tellg();
         size_t chunk_size = config.chunk_size_mb * 1024 * 1024;
-        size_t num_chunks = (total_size + chunk_size - 1) / chunk_size;
-        size_t actual_threads = std::min(num_chunks, config.thread_count);
         
-        std::vector<std::future<std::vector<LogEntry>>> futures;
+        std::vector<std::future<std::pair<std::vector<LogEntry>, size_t>>> futures;
         std::atomic<size_t> total_errors = 0;
 
-        for (size_t i = 0; i < actual_threads; ++i) {
-            size_t start = i * (total_size / actual_threads);
-            size_t end = (i == actual_threads - 1) ? total_size : (i + 1) * (total_size / actual_threads);
-            
+        size_t current_pos = 0;
+        while (current_pos < total_size) {
+            size_t start = current_pos;
+            size_t end = std::min(start + chunk_size, total_size);
+
+            if (end < total_size) {
+                file.seekg(end);
+                std::string temp;
+                std::getline(file, temp);
+                end = file.tellg();
+                if (end == (size_t)-1) end = total_size;
+            }
+
             futures.push_back(std::async(std::launch::async, [this, path, start, end, &total_errors]() {
                 std::ifstream f(path, std::ios::binary);
                 f.seekg(start);
                 std::string line;
-                if (start > 0) std::getline(f, line); // Skip partial line
-
                 std::vector<LogEntry> chunk_entries;
                 std::string buffer;
+                size_t lines_read = 0;
+
                 while (f.tellg() < static_cast<std::streampos>(end) && std::getline(f, line)) {
+                    lines_read++;
                     bool is_new = true;
                     if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
                     
                     if (is_new && !buffer.empty()) {
-                                            LogEntry entry = parseLogLine(buffer);
-                                            if (!entry.timestamp.empty() || !entry.message.empty()) {
-                                                // Note: applyEnrichers is not thread-safe if it modifies shared state, but here we assume enrichers are stateless or thread-safe.
-                                                // Also applyEnrichers reads enrichers_ which is read-only here.
-                                                applyEnrichers(entry);
-                                                chunk_entries.push_back(std::move(entry));
-                                            } else { // It's an invalid entry, count as error
-                                                total_errors.fetch_add(1);
-                                            }
-                                            buffer = line;
-                                        } else {
-                                            if (!buffer.empty()) buffer += "\n";
-                                            buffer += line;
-                                        }
-                                    }
-                                    if (!buffer.empty()) {
-                                        LogEntry entry = parseLogLine(buffer);
-                                        if (!entry.timestamp.empty() || !entry.message.empty()) {
-                                            applyEnrichers(entry);
-                                            chunk_entries.push_back(std::move(entry));
-                                        } else { // It's an invalid entry, count as error
-                                            total_errors.fetch_add(1);
-                                        }
-                                    }
-                        
-                return chunk_entries;
+                        LogEntry entry = parseLogLine(buffer);
+                        if (!entry.timestamp.empty() || !entry.message.empty()) {
+                            applyEnrichers(entry);
+                            chunk_entries.push_back(std::move(entry));
+                        } else total_errors.fetch_add(1);
+                        buffer = line;
+                    } else {
+                        if (!buffer.empty()) buffer += "\n";
+                        buffer += line;
+                    }
+                }
+                if (!buffer.empty()) {
+                    LogEntry entry = parseLogLine(buffer);
+                    if (!entry.timestamp.empty() || !entry.message.empty()) {
+                        applyEnrichers(entry);
+                        chunk_entries.push_back(std::move(entry));
+                    } else total_errors.fetch_add(1);
+                }
+                return std::make_pair(std::move(chunk_entries), lines_read);
             }));
+            current_pos = end;
         }
 
         LoadResult res = {0, 0};
+        size_t total_lines = 0;
         for (auto& f : futures) {
-            auto entries = f.get();
-            res.loaded_count += entries.size();
-            std::lock_guard lock(entries_mutex_);
-            entries_.insert(entries_.end(), std::make_move_iterator(entries.begin()), std::make_move_iterator(entries.end()));
+            auto [chunk_entries, lines] = f.get();
+            res.loaded_count += chunk_entries.size();
+            total_lines += lines;
+            std::unique_lock lock(rw_mutex_);
+            entries_.insert(entries_.end(), std::make_move_iterator(chunk_entries.begin()), std::make_move_iterator(chunk_entries.end()));
         }
         res.error_count = total_errors.load();
+        if (config.progress) config.progress({total_size, total_size, total_lines});
         return res;
     });
 }
@@ -782,6 +795,7 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
 std::map<LogValue, size_t> LogAnalyzer::getAttributeFrequency(std::string_view attr_key) const {
     std::map<LogValue, size_t> frequency;
     std::string key(attr_key);
+    std::shared_lock lock(rw_mutex_);
     for (const auto& entry : entries_) {
         auto it = entry.attributes.find(key);
         if (it != entry.attributes.end()) {
@@ -806,6 +820,7 @@ std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> LogAnalyze
 
 std::vector<LogEntry> LogAnalyzer::getTrace(std::string_view trace_id) const {
     std::vector<LogEntry> result;
+    std::shared_lock lock(rw_mutex_);
     for (const auto& entry : entries_) {
         if (entry.trace_id == trace_id) {
             result.push_back(entry);
@@ -814,9 +829,20 @@ std::vector<LogEntry> LogAnalyzer::getTrace(std::string_view trace_id) const {
     return result;
 }
 
-std::span<const LogEntry> LogAnalyzer::getEntriesSpan() const { return entries_; }
-const std::vector<LogEntry>& LogAnalyzer::getEntries() const { return entries_; }
-void LogAnalyzer::addEntry(LogEntry entry) { applyEnrichers(entry); entries_.push_back(std::move(entry)); }
+std::vector<LogEntry> LogAnalyzer::getEntriesSpan() const { 
+    std::shared_lock lock(rw_mutex_);
+    return entries_; 
+}
+const std::vector<LogEntry>& LogAnalyzer::getEntries() const { 
+    std::shared_lock lock(rw_mutex_);
+    return entries_; 
+}
+void LogAnalyzer::addEntry(LogEntry entry) { 
+    applyEnrichers(entry); 
+    std::unique_lock lock(rw_mutex_);
+    entries_.push_back(std::move(entry)); 
+    cached_stats_.reset();
+}
 
 LogEntry LogAnalyzer::parseLogLine(const std::string& line, size_t line_number) {
     LogEntry entry;
@@ -1068,6 +1094,7 @@ void LogAnalyzer::printStatistics() const {
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const FilterOptions& options) const { return getFilteredEntries(*options.toPredicate()); }
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate& predicate) const {
     std::vector<LogEntry> result;
+    std::shared_lock lock(rw_mutex_);
     for (const auto& entry : entries_) if (predicate.test(entry)) result.push_back(entry);
     return result;
 }
