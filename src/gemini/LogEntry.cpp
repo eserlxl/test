@@ -6,6 +6,16 @@
 #include <ctime>
 #include <typeinfo>
 
+#if defined(_WIN32) || defined(_WIN64)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
+const LogEntry::JsonOptions LogEntry::defaultJsonOptions; // Initializes with all defaults
+
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
 
 LogLevel LogEntry::parseLevel(std::string_view level_str) {
@@ -39,6 +49,14 @@ std::string_view LogEntry::levelToString(LogLevel level) {
     }
 }
 
+uint64_t LogEntry::currentProcessId() {
+#if defined(_WIN32) || defined(_WIN64)
+    return static_cast<uint64_t>(GetCurrentProcessId());
+#else
+    return static_cast<uint64_t>(getpid());
+#endif
+}
+
 LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_location loc) {
     LogEntry entry;
     entry.level = level;
@@ -46,6 +64,7 @@ LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_
     entry.time_point = std::chrono::system_clock::now();
     entry.timestamp = entry.generatedTimestampString();
     entry.withSource(loc);
+    entry.process_id = currentProcessId();
     
     std::stringstream ss;
     ss << std::this_thread::get_id();
@@ -66,6 +85,25 @@ LogEntry& LogEntry::withMessage(std::string_view msg) {
 
 LogEntry& LogEntry::withAttribute(std::string key, LogValue value) {
     attributes[std::move(key)] = std::move(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttributes(std::initializer_list<std::pair<const std::string, LogValue>> attrs) {
+    for (const auto& [key, value] : attrs) {
+        attributes[key] = value;
+    }
+    return *this;
+}
+
+LogEntry& LogEntry::withAttributes(const std::map<std::string, LogValue>& attrs) {
+    for (const auto& [key, value] : attrs) {
+        attributes[key] = value;
+    }
+    return *this;
+}
+
+LogEntry& LogEntry::withProcessId(uint64_t pid) {
+    process_id = pid;
     return *this;
 }
 
@@ -115,6 +153,23 @@ LogEntry& LogEntry::withException(const std::exception& e) {
 LogEntry& LogEntry::withTraceContext(std::string_view tid, std::string_view sid) {
     trace_id = tid;
     span_id = sid;
+    return *this;
+}
+
+LogEntry& LogEntry::removeAttribute(const std::string& key) {
+    attributes.erase(key);
+    return *this;
+}
+
+LogEntry& LogEntry::clearAttributes() {
+    attributes.clear();
+    return *this;
+}
+
+LogEntry& LogEntry::mergeAttributes(const LogEntry& other) {
+    for (const auto& [key, value] : other.attributes) {
+        attributes[key] = value;
+    }
     return *this;
 }
 
@@ -349,7 +404,7 @@ static std::expected<bool, std::string> parseJsonBoolean(std::string_view::itera
     return std::unexpected("Expected 'true' or 'false'");
 }
 
-// Helper to parse a LogValue (string, number, boolean)
+// Helper to parse a LogValue (string, number, boolean, null)
 static std::expected<LogValue, std::string> parseLogValue(std::string_view::iterator& it, std::string_view::iterator end) {
     it = skipWhitespace(it, end);
     if (it == end) {
@@ -363,6 +418,13 @@ static std::expected<LogValue, std::string> parseLogValue(std::string_view::iter
             auto bool_res = parseJsonBoolean(it, end);
             if (bool_res) return static_cast<LogValue>(*bool_res);
             return std::unexpected(bool_res.error());
+        }
+        case 'n': { // null
+            if (std::distance(it, end) >= 4 && std::string_view(&*it, 4) == "null") {
+                it += 4;
+                return std::monostate{};
+            }
+            return std::unexpected("Expected 'null'");
         }
         case '-': // negative number
         case '0': case '1': case '2': case '3': case '4':
@@ -452,6 +514,42 @@ static std::expected<std::map<std::string, LogValue>, std::string> parseJsonAttr
 
 
 // The main fromJson method
+LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
+    LogEntry entry;
+    // Auto-populate defaults
+    entry.process_id = currentProcessId();
+    entry.time_point = std::chrono::system_clock::now();
+    entry.timestamp = entry.generatedTimestampString();
+    
+    std::stringstream ss;
+    ss << std::this_thread::get_id();
+    entry.thread_id = ss.str();
+
+    for (const auto& [key, value] : data) {
+        if (key == "level" && std::holds_alternative<std::string>(value)) {
+            entry.level = parseLevel(std::get<std::string>(value));
+        } else if (key == "message" && std::holds_alternative<std::string>(value)) {
+            entry.message = std::get<std::string>(value);
+        } else if (key == "timestamp" && std::holds_alternative<std::string>(value)) {
+            entry.timestamp = std::get<std::string>(value);
+            entry.parseTime();
+        } else if (key == "process_id") {
+            if (std::holds_alternative<uint64_t>(value)) entry.process_id = std::get<uint64_t>(value);
+            else if (std::holds_alternative<int64_t>(value)) entry.process_id = static_cast<uint64_t>(std::get<int64_t>(value));
+        } else if (key == "thread_id" && std::holds_alternative<std::string>(value)) {
+            entry.thread_id = std::get<std::string>(value);
+        } else if (key == "trace_id" && std::holds_alternative<std::string>(value)) {
+            entry.trace_id = std::get<std::string>(value);
+        } else if (key == "span_id" && std::holds_alternative<std::string>(value)) {
+            entry.span_id = std::get<std::string>(value);
+        } else {
+            // Treat everything else as an attribute
+            entry.attributes[key] = value;
+        }
+    }
+    return entry;
+}
+
 std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_str) {
     LogEntry entry;
     auto it = json_str.begin();
@@ -495,6 +593,16 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
             auto val_res = parseJsonString(it, end);
             if (!val_res) return std::unexpected("Failed to parse message: " + val_res.error());
             entry.message = *val_res;
+        } else if (key == "process_id") { // Iteration 1: Handle process_id
+            auto val_res = parseJsonNumber(it, end);
+            if (!val_res) return std::unexpected("Failed to parse process_id: " + val_res.error());
+            if (std::holds_alternative<uint64_t>(*val_res)) {
+                entry.process_id = std::get<uint64_t>(*val_res);
+            } else if (std::holds_alternative<int64_t>(*val_res)) {
+                entry.process_id = static_cast<uint64_t>(std::get<int64_t>(*val_res));
+            } else {
+                return std::unexpected("process_id must be a number");
+            }
         } else if (key == "source") {
             it = skipWhitespace(it, end);
             if (it == end || *it != '{') {
@@ -607,11 +715,48 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
     std::string nl = options.pretty ? "\n" : "";
     
     oss << "{" << nl;
-    oss << indent << "\"timestamp\": \"" << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp) << "\"," << nl;
+
+    // Timestamp
+    if (options.timestamp_format == TimestampFormat::UnixMillis) {
+        oss << indent << "\"timestamp\": " << std::chrono::duration_cast<std::chrono::milliseconds>(
+               time_point.time_since_epoch()).count();
+    } else {
+        oss << indent << "\"timestamp\": \"";
+        if (options.timestamp_format == TimestampFormat::ISO8601) {
+            // Format to ISO 8601 (e.g., 2023-10-27T10:00:00.000Z)
+            // Note: C++20 std::chrono::format is still a bit experimental or not universally available
+            // Using a manual approach for robustness.
+            std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
+            std::tm tm = {};
+            #if defined(_WIN32) || defined(_WIN64)
+                gmtime_s(&tm, &tt); // Use gmtime for UTC
+            #else
+                gmtime_r(&tt, &tm); // Use gmtime for UTC
+            #endif
+            
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                time_point.time_since_epoch()) % 1000;
+            
+            // Example: 2023-10-27T10:00:00.123Z
+            oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S") << "." 
+                << std::setfill('0') << std::setw(3) << ms.count() << "Z";
+
+        } else { // Default or unknown, use generatedTimestampString
+            oss << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp);
+        }
+        oss << "\"";
+    }
+    oss << "," << nl;
+
     oss << indent << "\"level\": \"" << levelToString(level) << "\"," << nl;
     oss << indent << "\"message\": \"" << escapeJson(message) << "\"";
 
-    if (options.include_source && !source_file.empty()) {
+    // Process ID
+    if (process_id != 0) {
+        oss << "," << nl << indent << "\"process_id\": " << process_id;
+    }
+
+    if (options.include_source && (!source_file.empty() || !source_function.empty() || source_line != 0)) {
         oss << "," << nl << indent << "\"source\": {" << nl;
         oss << indent << indent << "\"file\": \"" << escapeJson(source_file) << "\"," << nl;
         oss << indent << indent << "\"function\": \"" << escapeJson(source_function) << "\"," << nl;
@@ -656,7 +801,9 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
                     oss << "\"" << escapeJson(arg) << "\"";
                 } else if constexpr (std::is_same_v<T, bool>) {
                     oss << (arg ? "true" : "false");
-                } else {
+                } else if constexpr (std::is_same_v<T, std::monostate>) {
+                    oss << "null";
+                } else { // Numeric types
                     oss << arg;
                 }
             }, value);
