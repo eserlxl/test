@@ -7,7 +7,7 @@
 #include <cmath>
 #include <map>
 #include <queue>
-#include <mutex>
+#include <shared_mutex>
 #include <condition_variable>
 
 // --- ParsingConfig Implementation ---
@@ -25,13 +25,24 @@ bool ParsingConfig::validate() const {
 ParsingConfig ParsingConfig::fromRegex(std::string pattern) {
     ParsingConfig config;
     config.line_pattern = pattern;
-    // Simple heuristic to map common names from named groups if present in the pattern string
-    if (pattern.find("?<timestamp>") != std::string::npos) config.field_mapping["timestamp"] = "timestamp";
-    if (pattern.find("?<level>") != std::string::npos) config.field_mapping["level"] = "level";
-    if (pattern.find("?<message>") != std::string::npos) config.field_mapping["message"] = "message";
-    if (pattern.find("?<thread_id>") != std::string::npos) config.field_mapping["thread_id"] = "thread_id";
-    if (pattern.find("?<file>") != std::string::npos) config.field_mapping["file"] = "file";
-    if (pattern.find("?<line>") != std::string::npos) config.field_mapping["line"] = "line";
+    // Use the new helper for named groups
+    config.field_mapping = ParsingConfig::fromRegexWithNamedGroups(pattern).field_mapping;
+    return config;
+}
+
+// Improved static helper to parse named groups
+ParsingConfig ParsingConfig::fromRegexWithNamedGroups(std::string pattern) {
+    ParsingConfig config;
+    config.line_pattern = pattern;
+    std::regex named_group_regex("\\(\\?<([a-zA-Z_][a-zA-Z0-9_]*)>");
+    auto words_begin = std::sregex_iterator(pattern.begin(), pattern.end(), named_group_regex);
+    auto words_end = std::sregex_iterator();
+
+    for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
+        std::smatch match = *i;
+        std::string name = match[1].str(); // The captured group name
+        config.field_mapping[name] = name; // Assume group name maps to field name
+    }
     return config;
 }
 
@@ -255,7 +266,16 @@ namespace Filters {
 
     std::unique_ptr<LogPredicate> Level(LogLevel l) { return std::make_unique<LevelPredicate>(l); }
     std::unique_ptr<LogPredicate> MinLevel(LogLevel l) { return std::make_unique<MinLevelPredicate>(l); }
+    std::unique_ptr<LogPredicate> MultiLevel(std::vector<LogLevel> levels) { return std::make_unique<MultiLevelPredicate>(std::move(levels)); }
+
+    std::unique_ptr<LogPredicate> TimeRange(std::optional<std::chrono::system_clock::time_point> start, std::optional<std::chrono::system_clock::time_point> end) {
+        return std::make_unique<TimeRangePredicate>(start, end);
+    }
     
+    std::unique_ptr<LogPredicate> Tag(std::string tag) { return std::make_unique<TagPredicate>(std::set<std::string>{std::move(tag)}); }
+    std::unique_ptr<LogPredicate> ThreadId(std::string tid) { return std::make_unique<MetadataPredicate>(std::nullopt, std::move(tid)); }
+    std::unique_ptr<LogPredicate> SourceFile(std::string file) { return std::make_unique<MetadataPredicate>(std::move(file), std::nullopt); }
+
     std::unique_ptr<LogPredicate> Keyword(std::string k, bool case_sensitive) { 
         return std::make_unique<KeywordPredicate>(std::move(k), case_sensitive); 
     }
@@ -296,17 +316,22 @@ namespace Filters {
 std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const {
     std::unique_ptr<LogPredicate> root = nullptr;
     auto combine = [&](std::unique_ptr<LogPredicate> next) {
-        if (!root) root = std::move(next);
+        if (!root) root = Filters::And(std::move(root), std::move(next));
         else root = Filters::And(std::move(root), std::move(next));
     };
 
-    if (level) combine(std::make_unique<Filters::MinLevelPredicate>(*level));
-    if (!levels.empty()) combine(std::make_unique<Filters::MultiLevelPredicate>(levels));
+    // Use public filter factory functions
+    if (level) combine(Filters::MinLevel(*level)); 
+    if (!levels.empty()) combine(Filters::MultiLevel(levels));
     if (keyword) combine(Filters::Keyword(*keyword, case_sensitive));
     if (message_regex_pattern) combine(Filters::Regex(*message_regex_pattern));
-    if (start_tp || end_tp || start_time || end_time) combine(std::make_unique<Filters::TimeRangePredicate>(start_tp, end_tp, start_time, end_time));
-    if (source_file || thread_id) combine(std::make_unique<Filters::MetadataPredicate>(source_file, thread_id));
-    if (!required_tags.empty()) combine(std::make_unique<Filters::TagPredicate>(required_tags));
+    // When using TimeRange, pass time_points. start_time/end_time are for legacy string comparison in predicate.
+    if (start_tp || end_tp || start_time || end_time) combine(Filters::TimeRange(start_tp, end_tp)); 
+    if (source_file) combine(Filters::SourceFile(*source_file)); 
+    if (thread_id) combine(Filters::ThreadId(*thread_id)); 
+    if (!required_tags.empty()) { 
+        for (const auto& tag : required_tags) combine(Filters::Tag(tag)); 
+    }
     if (since) combine(Filters::Since(*since));
     if (!any_keywords.empty()) combine(Filters::AnyKeyword(any_keywords, case_sensitive));
     
@@ -434,7 +459,7 @@ void ConsoleExporter::exportEntries(std::span<const LogEntry> entries) {
 
 // --- LogAnalyzer Implementation ---
 
-LogAnalyzer::LogAnalyzer() {
+LogAnalyzer::LogAnalyzer() : rw_mutex_() {
     legacy_timestamp_regex_ = std::regex(R"(\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\]?)");
     legacy_level_regex_ = std::regex(R"(\[?(DEBUG|INFO|WARNING|WARN|ERROR|ERR|CRITICAL|CRIT|FATAL)\]?)");
 }
@@ -882,51 +907,164 @@ bool LogAnalyzer::matchFilter(const LogEntry& entry, const FilterOptions& option
 void LogAnalyzer::addEnricher(LogEnricher enricher) { enrichers_.push_back(std::move(enricher)); }
 void LogAnalyzer::applyEnrichers(LogEntry& entry) { for (auto& e : enrichers_) e(entry); }
 
-void LogAnalyzer::analyze() {}
-LogStatistics LogAnalyzer::getStatistics() const {
+// Implement `analyze()` and update `getStatistics()` for caching
+void LogAnalyzer::analyze() {
     LogStatistics stats;
+    std::shared_lock lock(rw_mutex_); // Acquire read lock to safely access entries_
     stats.total_entries = entries_.size();
-    if (entries_.empty()) return stats;
-    std::map<std::string, size_t> error_counts;
-    auto min_max = std::minmax_element(entries_.begin(), entries_.end(), [](const auto& a, const auto& b) { return a.time_point < b.time_point; });
-    if (min_max.first != entries_.end() && min_max.first->time_point.time_since_epoch().count() > 0) {
-        stats.first_timestamp = min_max.first->timestamp;
-        stats.last_timestamp = min_max.second->timestamp;
-        stats.duration = std::chrono::duration_cast<std::chrono::seconds>(min_max.second->time_point - min_max.first->time_point);
-        if (stats.duration.count() > 0) stats.entries_per_second = (double)stats.total_entries / stats.duration.count();
+    if (entries_.empty()) {
+        cached_stats_ = stats; // Cache empty stats
+        return;
     }
-    for (const auto& entry : entries_) {
-        stats.level_counts[entry.level]++;
-        if (entry.level == LogLevel::ERROR) error_counts[entry.message]++;
-        if (!entry.thread_id.empty()) stats.thread_distribution[entry.thread_id]++;
-        if (entry.time_point.time_since_epoch().count() > 0) {
-            auto minute_tp = std::chrono::time_point_cast<std::chrono::minutes>(entry.time_point);
-            stats.timeline_distribution[minute_tp]++;
+
+    std::map<std::string, size_t> error_counts;
+    auto min_max_it = std::minmax_element(entries_.begin(), entries_.end(), 
+        [](const LogEntry& a, const LogEntry& b) { 
+            return a.time_point < b.time_point; 
+        });
+    
+    if (min_max_it.first != entries_.end() && min_max_it.first->time_point.time_since_epoch().count() > 0) {
+        stats.first_timestamp = min_max_it.first->timestamp;
+        stats.last_timestamp = min_max_it.second->timestamp;
+        stats.duration = std::chrono::duration_cast<std::chrono::seconds>(min_max_it.second->time_point - min_max_it.first->time_point);
+        if (stats.duration.count() > 0) {
+            stats.entries_per_second = static_cast<double>(stats.total_entries) / stats.duration.count();
         }
     }
-    for (const auto& [msg, count] : error_counts) stats.top_errors.push_back({msg, count});
+
+    for (const auto& entry : entries_) {
+        stats.level_counts[entry.level]++;
+        if (entry.level == LogLevel::ERROR || entry.level == LogLevel::CRITICAL) {
+            error_counts[entry.message]++;
+        }
+        if (!entry.thread_id.empty()) {
+            stats.thread_distribution[entry.thread_id]++;
+        }
+        if (entry.time_point.time_since_epoch().count() > 0) {
+            auto bucket_start = std::chrono::time_point_cast<std::chrono::minutes>(entry.time_point);
+            stats.timeline_distribution[bucket_start]++;
+        }
+    }
+
+    stats.top_errors.reserve(error_counts.size());
+    for (const auto& [msg, count] : error_counts) {
+        stats.top_errors.push_back({msg, count});
+    }
     std::sort(stats.top_errors.begin(), stats.top_errors.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-    if (stats.top_errors.size() > 5) stats.top_errors.resize(5);
-    return stats;
+    if (stats.top_errors.size() > 5) {
+        stats.top_errors.resize(5);
+    }
+
+    cached_stats_ = std::move(stats);
+}
+
+LogStatistics LogAnalyzer::getStatistics() const {
+    std::shared_lock lock(rw_mutex_); 
+    if (cached_stats_) {
+        return *cached_stats_;
+    }
+    lock.unlock(); 
+
+    const_cast<LogAnalyzer*>(this)->analyze(); 
+
+    lock.lock();
+    return *cached_stats_;
+}
+
+// --- New aggregation methods ---
+std::map<LogValue, size_t> LogAnalyzer::getFrequencyMap(std::string_view attribute_key) const {
+    std::map<LogValue, size_t> frequency;
+    std::string key(attribute_key);
+    std::shared_lock lock(rw_mutex_); 
+    for (const auto& entry : entries_) {
+        auto it = entry.attributes.find(key);
+        if (it != entry.attributes.end()) {
+            frequency[it->second]++;
+        }
+    }
+    return frequency;
+}
+
+// In-place sort
+void LogAnalyzer::sort(std::function<bool(const LogEntry&, const LogEntry&)> cmp) {
+    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
+    std::sort(entries_.begin(), entries_.end(), cmp);
+    cached_stats_.reset(); // Invalidate cache
+}
+
+// In-place removal
+void LogAnalyzer::removeIf(const LogPredicate& predicate) {
+    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
+    auto it = std::remove_if(entries_.begin(), entries_.end(), 
+        [&](const LogEntry& entry) {
+            return predicate.test(entry);
+        });
+    entries_.erase(it, entries_.end());
+    cached_stats_.reset(); // Invalidate cache
+}
+
+// Bulk transformation
+void LogAnalyzer::transform(std::function<void(LogEntry&)> transformer) {
+    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
+    for (auto& entry : entries_) {
+        transformer(entry); // Apply transformer to each entry
+    }
+    cached_stats_.reset(); // Invalidate cache
+}
+
+// New generic export methods
+void LogAnalyzer::exportTo(LogExporter& exporter) const {
+    std::shared_lock lock(rw_mutex_); // Read lock for entries_
+    exporter.exportEntries({entries_.data(), entries_.size()});
+}
+
+void LogAnalyzer::exportFilteredTo(LogExporter& exporter, const LogPredicate& predicate) const {
+    std::vector<LogEntry> filtered_entries;
+    {
+        std::shared_lock lock(rw_mutex_); // Read lock for entries_
+        for (const auto& entry : entries_) {
+            if (predicate.test(entry)) {
+                filtered_entries.push_back(entry);
+            }
+        }
+    }
+    // Note: Exporters are not expected to be thread-safe, so we copy filtered entries
+    // and then export them outside the lock, or export one by one from inside lock
+    // if exporter supports streaming. For now, collect all and export.
+    exporter.exportEntries({filtered_entries.data(), filtered_entries.size()});
+}
+
+void LogAnalyzer::exportStatistics(LogExporter& exporter) const {
+    // getStatistics() will ensure analyze() is called and cache is populated
+    LogStatistics stats = getStatistics(); 
+    exporter.exportStats(stats);
 }
 
 void LogAnalyzer::writeStatistics(std::ostream& out, bool as_json) const {
     if (as_json) {
-        JsonExporter exporter(out);
-        exporter.exportStats(getStatistics());
+        JsonExporter exporter(out, true); // Assuming pretty JSON for direct JSON output
+        exportStatistics(exporter);
     } else {
-        auto stats = getStatistics();
-        out << "\n=== Log Analysis Statistics ===\nTotal entries: " << stats.total_entries << "\n";
+        ConsoleExporter exporter(out);
+        exportStatistics(exporter);
     }
 }
 
 void LogAnalyzer::writeFilteredEntries(std::ostream& out, const FilterOptions& options, bool as_json) const {
-    auto filtered = getFilteredEntries(options);
-    if (as_json) { JsonExporter exporter(out); exporter.exportEntries(filtered); }
-    else { for (const auto& entry : filtered) out << entry << "\n"; }
+    auto pred = options.toPredicate(); // Create predicate from options
+    if (as_json) {
+        JsonExporter exporter(out, true); // Assuming pretty JSON
+        exportFilteredTo(exporter, *pred);
+    } else {
+        ConsoleExporter exporter(out);
+        exportFilteredTo(exporter, *pred);
+    }
 }
 
-void LogAnalyzer::printStatistics() const { writeStatistics(std::cout, false); }
+void LogAnalyzer::printStatistics() const { 
+    ConsoleExporter exporter(std::cout);
+    exportStatistics(exporter);
+}
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const FilterOptions& options) const { return getFilteredEntries(*options.toPredicate()); }
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate& predicate) const {
     std::vector<LogEntry> result;
