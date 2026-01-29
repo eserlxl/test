@@ -18,6 +18,21 @@ const LogEntry::JsonOptions LogEntry::defaultJsonOptions; // Initializes with al
 
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
 
+// LogValue helpers
+LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
+LogValue::LogValue(LogObject obj) : LogValueBase(std::make_shared<LogObject>(std::move(obj))) {}
+
+bool LogValue::isList() const { return std::holds_alternative<std::shared_ptr<LogList>>(*this); }
+bool LogValue::isObject() const { return std::holds_alternative<std::shared_ptr<LogObject>>(*this); }
+
+const LogList& LogValue::asList() const {
+    return *std::get<std::shared_ptr<LogList>>(*this);
+}
+
+const LogObject& LogValue::asObject() const {
+    return *std::get<std::shared_ptr<LogObject>>(*this);
+}
+
 LogLevel LogEntry::parseLevel(std::string_view level_str) {
     std::string upper_level(level_str);
     std::transform(upper_level.begin(), upper_level.end(), upper_level.begin(),
@@ -76,16 +91,8 @@ LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_
     LogEntry entry;
     entry.level = level;
     entry.message = message;
-    entry.time_point = std::chrono::system_clock::now();
-    entry.timestamp = entry.generatedTimestampString();
     entry.withSource(loc);
-    entry.process_id = currentProcessId();
-    entry.host_name = currentHostName();
-    
-    std::stringstream ss;
-    ss << std::this_thread::get_id();
-    entry.thread_id = ss.str();
-    
+    entry.withMetadata();
     return entry;
 }
 
@@ -96,6 +103,29 @@ LogEntry& LogEntry::withLevel(LogLevel l) {
 
 LogEntry& LogEntry::withMessage(std::string_view msg) {
     message = msg;
+    return *this;
+}
+
+LogEntry& LogEntry::withMetadata() {
+    if (time_point.time_since_epoch().count() == 0) {
+        time_point = std::chrono::system_clock::now();
+        timestamp = generatedTimestampString();
+    }
+    
+    if (process_id == 0) {
+        process_id = currentProcessId();
+    }
+    
+    if (host_name.empty()) {
+        host_name = currentHostName();
+    }
+    
+    if (thread_id.empty()) {
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        thread_id = ss.str();
+    }
+    
     return *this;
 }
 
@@ -430,7 +460,12 @@ static std::expected<bool, std::string> parseJsonBoolean(std::string_view::itera
     return std::unexpected("Expected 'true' or 'false'");
 }
 
-// Helper to parse a LogValue (string, number, boolean, null)
+// Forward declarations for recursive parsing
+static std::expected<LogValue, std::string> parseLogValue(std::string_view::iterator& it, std::string_view::iterator end);
+static std::expected<LogObject, std::string> parseJsonObject(std::string_view::iterator& it, std::string_view::iterator end);
+static std::expected<LogList, std::string> parseJsonArray(std::string_view::iterator& it, std::string_view::iterator end);
+
+// Helper to parse a LogValue (string, number, boolean, null, object, array)
 static std::expected<LogValue, std::string> parseLogValue(std::string_view::iterator& it, std::string_view::iterator end) {
     it = skipWhitespace(it, end);
     if (it == end) {
@@ -439,6 +474,16 @@ static std::expected<LogValue, std::string> parseLogValue(std::string_view::iter
 
     switch (*it) {
         case '"': return parseJsonString(it, end);
+        case '{': {
+            auto obj_res = parseJsonObject(it, end);
+            if (!obj_res) return std::unexpected(obj_res.error());
+            return LogValue(std::move(*obj_res));
+        }
+        case '[': {
+            auto list_res = parseJsonArray(it, end);
+            if (!list_res) return std::unexpected(list_res.error());
+            return LogValue(std::move(*list_res));
+        }
         case 't': // true
         case 'f': { // false
             auto bool_res = parseJsonBoolean(it, end);
@@ -461,6 +506,81 @@ static std::expected<LogValue, std::string> parseLogValue(std::string_view::iter
     }
 }
 
+// Helper to parse a JSON array (LogList)
+static std::expected<LogList, std::string> parseJsonArray(std::string_view::iterator& it, std::string_view::iterator end) {
+    it = skipWhitespace(it, end);
+    if (it == end || *it != '[') {
+        return std::unexpected("Expected '[' to start array");
+    }
+    ++it; // Skip '['
+
+    LogList list;
+    bool first_item = true;
+
+    while (it != end) {
+        it = skipWhitespace(it, end);
+        if (*it == ']') {
+            ++it; // Skip ']'
+            return list;
+        }
+
+        if (!first_item) {
+            if (*it != ',') {
+                return std::unexpected("Expected ',' or ']' in array");
+            }
+            ++it; // Skip ','
+        }
+
+        auto val_res = parseLogValue(it, end);
+        if (!val_res) return std::unexpected(val_res.error());
+        list.push_back(std::move(*val_res));
+        first_item = false;
+    }
+    return std::unexpected("Expected ']' to end array, but reached end of input");
+}
+
+// Helper to parse a JSON object (LogObject)
+static std::expected<LogObject, std::string> parseJsonObject(std::string_view::iterator& it, std::string_view::iterator end) {
+    it = skipWhitespace(it, end);
+    if (it == end || *it != '{') {
+        return std::unexpected("Expected '{' to start object");
+    }
+    ++it; // Skip '{'
+
+    LogObject obj;
+    bool first_item = true;
+
+    while (it != end) {
+        it = skipWhitespace(it, end);
+        if (*it == '}') {
+            ++it; // Skip '}'
+            return obj;
+        }
+
+        if (!first_item) {
+            if (*it != ',') {
+                return std::unexpected("Expected ',' or '}' in object");
+            }
+            ++it; // Skip ','
+        }
+
+        auto key_res = parseJsonString(it, end);
+        if (!key_res) return std::unexpected("Failed to parse key: " + key_res.error());
+
+        it = skipWhitespace(it, end);
+        if (it == end || *it != ':') {
+            return std::unexpected("Expected ':' after key");
+        }
+        ++it; // Skip ':'
+
+        auto value_res = parseLogValue(it, end);
+        if (!value_res) return std::unexpected("Failed to parse value for key '" + *key_res + "': " + value_res.error());
+
+        obj[*key_res] = std::move(*value_res);
+        first_item = false;
+    }
+    return std::unexpected("Expected '}' to end object, but reached end of input");
+}
 
 // Helper to parse a JSON array of strings (e.g., ["tag1", "tag2"])
 static std::expected<std::set<std::string, std::less<>>, std::string> parseJsonStringArray(std::string_view::iterator& it, std::string_view::iterator end) {
@@ -495,62 +615,12 @@ static std::expected<std::set<std::string, std::less<>>, std::string> parseJsonS
     return std::unexpected("Expected ']' to end array, but reached end of input");
 }
 
-// Helper to parse a JSON object for attributes
-static std::expected<std::map<std::string, LogValue>, std::string> parseJsonAttributes(std::string_view::iterator& it, std::string_view::iterator end) {
-    it = skipWhitespace(it, end);
-    if (it == end || *it != '{') {
-        return std::unexpected("Expected '{' to start object");
-    }
-    ++it; // Skip '{'
-
-    std::map<std::string, LogValue> attributes;
-    bool first_item = true;
-
-    while (it != end) {
-        it = skipWhitespace(it, end);
-        if (*it == '}') {
-            ++it; // Skip '}'
-            return attributes;
-        }
-
-        if (!first_item) {
-            if (*it != ',') {
-                return std::unexpected("Expected ',' or '}' in object");
-            }
-            ++it; // Skip ','
-        }
-
-        auto key_res = parseJsonString(it, end);
-        if (!key_res) return std::unexpected("Failed to parse attribute key: " + key_res.error());
-
-        it = skipWhitespace(it, end);
-        if (it == end || *it != ':') {
-            return std::unexpected("Expected ':' after attribute key");
-        }
-        ++it; // Skip ':'
-
-        auto value_res = parseLogValue(it, end);
-        if (!value_res) return std::unexpected("Failed to parse attribute value for key '" + *key_res + "': " + value_res.error());
-
-        attributes[*key_res] = *value_res;
-        first_item = false;
-    }
-    return std::unexpected("Expected '}' to end object, but reached end of input");
-}
-
 
 // The main fromJson method
 LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
     LogEntry entry;
     // Auto-populate defaults
-    entry.process_id = currentProcessId();
-    entry.host_name = currentHostName();
-    entry.time_point = std::chrono::system_clock::now();
-    entry.timestamp = entry.generatedTimestampString();
-    
-    std::stringstream ss;
-    ss << std::this_thread::get_id();
-    entry.thread_id = ss.str();
+    entry.withMetadata();
 
     for (const auto& [key, value] : data) {
         if (key == "level" && std::holds_alternative<std::string>(value)) {
@@ -573,6 +643,19 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue>& data) {
             entry.trace_id = std::get<std::string>(value);
         } else if (key == "span_id" && std::holds_alternative<std::string>(value)) {
             entry.span_id = std::get<std::string>(value);
+        } else if (key == "source_file" && std::holds_alternative<std::string>(value)) {
+            entry.source_file = std::get<std::string>(value);
+        } else if (key == "source_function" && std::holds_alternative<std::string>(value)) {
+            entry.source_function = std::get<std::string>(value);
+        } else if (key == "source_line" && std::holds_alternative<int64_t>(value)) {
+            entry.source_line = static_cast<int>(std::get<int64_t>(value));
+        } else if (key == "tags" && std::holds_alternative<std::shared_ptr<LogList>>(value)) {
+            auto list = std::get<std::shared_ptr<LogList>>(value);
+            for (const auto& v : *list) {
+                if (std::holds_alternative<std::string>(v)) {
+                    entry.tags.insert(std::get<std::string>(v));
+                }
+            }
         } else {
             // Treat everything else as an attribute
             entry.attributes[key] = value;
@@ -592,6 +675,15 @@ std::map<std::string, LogValue> LogEntry::toMap() const {
     if (!thread_id.empty()) m["thread_id"] = thread_id;
     if (!trace_id.empty()) m["trace_id"] = trace_id;
     if (!span_id.empty()) m["span_id"] = span_id;
+    if (!source_file.empty()) m["source_file"] = source_file;
+    if (!source_function.empty()) m["source_function"] = source_function;
+    if (source_line != 0) m["source_line"] = static_cast<int64_t>(source_line);
+    
+    if (!tags.empty()) {
+        LogList tagList;
+        for (const auto& tag : tags) tagList.push_back(tag);
+        m["tags"] = LogValue(std::move(tagList));
+    }
     
     for (const auto& [key, value] : attributes) {
         m[key] = value;
@@ -765,9 +857,9 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
             if (!val_res) return std::unexpected("Failed to parse tags: " + val_res.error());
             entry.tags = *val_res;
         } else if (key == "attributes") {
-            auto val_res = parseJsonAttributes(it, end);
+            auto val_res = parseJsonObject(it, end);
             if (!val_res) return std::unexpected("Failed to parse attributes: " + val_res.error());
-            entry.attributes = *val_res;
+            entry.attributes = std::move(*val_res);
         } else {
             // Skip unknown key's value
             auto dummy_val_res = parseLogValue(it, end);
@@ -812,10 +904,73 @@ static std::string escapeJson(const std::string& s) {
     return o.str();
 }
 
+struct JsonVisitor {
+    std::ostream& os;
+    const LogEntry::JsonOptions& options;
+    int indent_level;
+
+    void indent() const {
+        if (options.pretty) {
+            for (int i = 0; i < indent_level; ++i) os << "  ";
+        }
+    }
+
+    void nl() const {
+        if (options.pretty) os << "\n";
+    }
+
+    void operator()(std::monostate) const { os << "null"; }
+    void operator()(bool b) const { os << (b ? "true" : "false"); }
+    void operator()(int64_t i) const { os << i; }
+    void operator()(uint64_t u) const { os << u; }
+    void operator()(double d) const { os << d; }
+    void operator()(const std::string& s) const { os << "\"" << escapeJson(s) << "\""; }
+    
+    void operator()(const std::shared_ptr<LogList>& list) const {
+        if (!list || list->empty()) {
+            os << "[]";
+            return;
+        }
+        os << "[";
+        nl();
+        for (size_t i = 0; i < list->size(); ++i) {
+            if (options.pretty) {
+                for (int j = 0; j <= indent_level; ++j) os << "  ";
+            }
+            std::visit(JsonVisitor{os, options, indent_level + 1}, (*list)[i]);
+            if (i < list->size() - 1) os << ",";
+            nl();
+        }
+        indent();
+        os << "]";
+    }
+
+    void operator()(const std::shared_ptr<LogObject>& obj) const {
+        if (!obj || obj->empty()) {
+            os << "{}";
+            return;
+        }
+        os << "{";
+        nl();
+        size_t count = 0;
+        for (const auto& [key, value] : *obj) {
+            if (options.pretty) {
+                for (int j = 0; j <= indent_level; ++j) os << "  ";
+            }
+            os << "\"" << escapeJson(key) << "\": ";
+            std::visit(JsonVisitor{os, options, indent_level + 1}, value);
+            if (++count < obj->size()) os << ",";
+            nl();
+        }
+        indent();
+        os << "}";
+    }
+};
+
 std::string LogEntry::toJson(const JsonOptions& options) const {
     std::ostringstream oss;
-    std::string indent = options.pretty ? "  " : "";
     std::string nl = options.pretty ? "\n" : "";
+    std::string indent = options.pretty ? "  " : "";
     
     oss << "{" << nl;
 
@@ -826,46 +981,50 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
     } else {
         oss << indent << "\"timestamp\": \"";
         if (options.timestamp_format == TimestampFormat::ISO8601) {
-            // Format to ISO 8601 (e.g., 2023-10-27T10:00:00.000Z)
-            // Note: C++20 std::chrono::format is still a bit experimental or not universally available
-            // Using a manual approach for robustness.
             std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
             std::tm tm = {};
             #if defined(_WIN32) || defined(_WIN64)
-                gmtime_s(&tm, &tt); // Use gmtime for UTC
+                gmtime_s(&tm, &tt);
             #else
-                gmtime_r(&tt, &tm); // Use gmtime for UTC
+                gmtime_r(&tt, &tm);
             #endif
             
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                time_point.time_since_epoch()) % 1000;
+            oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
             
-            // Example: 2023-10-27T10:00:00.123Z
-            oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S") << "." 
-                << std::setfill('0') << std::setw(3) << ms.count() << "Z";
-
-        } else { // Default or unknown, use generatedTimestampString
+            if (options.precision != JsonOptions::Precision::Seconds) {
+                auto epoch = time_point.time_since_epoch();
+                oss << ".";
+                if (options.precision == JsonOptions::Precision::Millis) {
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(epoch) % 1000;
+                    oss << std::setfill('0') << std::setw(3) << ms.count();
+                } else if (options.precision == JsonOptions::Precision::Micros) {
+                    auto us = std::chrono::duration_cast<std::chrono::microseconds>(epoch) % 1000000;
+                    oss << std::setfill('0') << std::setw(6) << us.count();
+                } else if (options.precision == JsonOptions::Precision::Nanos) {
+                    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch) % 1000000000;
+                    oss << std::setfill('0') << std::setw(9) << ns.count();
+                }
+            }
+            oss << "Z";
+        } else {
             oss << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp);
         }
         oss << "\"";
     }
-    oss << "," << nl;
 
-    oss << indent << "\"level\": \"" << levelToString(level) << "\"," << nl;
-    oss << indent << "\"message\": \"" << escapeJson(message) << "\"";
+    auto writeField = [&](const std::string& key, const auto& value, bool isString = true) {
+        oss << "," << nl << indent << "\"" << key << "\": ";
+        if (isString) oss << "\"";
+        oss << value;
+        if (isString) oss << "\"";
+    };
 
-    // Process ID
-    if (process_id != 0) {
-        oss << "," << nl << indent << "\"process_id\": " << process_id;
-    }
+    writeField("level", levelToString(level));
+    writeField("message", escapeJson(message));
 
-    if (!host_name.empty()) {
-        oss << "," << nl << indent << "\"host_name\": \"" << escapeJson(host_name) << "\"";
-    }
-
-    if (!app_name.empty()) {
-        oss << "," << nl << indent << "\"app_name\": \"" << escapeJson(app_name) << "\"";
-    }
+    if (process_id != 0) writeField("process_id", process_id, false);
+    if (!host_name.empty()) writeField("host_name", escapeJson(host_name));
+    if (!app_name.empty()) writeField("app_name", escapeJson(app_name));
 
     if (options.include_source && (!source_file.empty() || !source_function.empty() || source_line != 0)) {
         oss << "," << nl << indent << "\"source\": {" << nl;
@@ -875,53 +1034,42 @@ std::string LogEntry::toJson(const JsonOptions& options) const {
         oss << indent << "}";
     }
 
-    if (options.include_thread && !thread_id.empty()) {
-        oss << "," << nl << indent << "\"thread_id\": \"" << escapeJson(thread_id) << "\"";
-    }
+    if (options.include_thread && !thread_id.empty()) writeField("thread_id", escapeJson(thread_id));
 
     if (options.include_tracing) {
-        if (!trace_id.empty()) {
-            oss << "," << nl << indent << "\"trace_id\": \"" << escapeJson(trace_id) << "\"";
-        }
-        if (!span_id.empty()) {
-            oss << "," << nl << indent << "\"span_id\": \"" << escapeJson(span_id) << "\"";
+        if (!trace_id.empty()) writeField("trace_id", escapeJson(trace_id));
+        if (!span_id.empty()) writeField("span_id", escapeJson(span_id));
+    }
+
+    if (!tags.empty() || !options.exclude_empty) {
+        if (!tags.empty()) {
+            oss << "," << nl << indent << "\"tags\": [";
+            bool first = true;
+            for (const auto& tag : tags) {
+                if (!first) oss << ", ";
+                oss << "\"" << escapeJson(tag) << "\"";
+                first = false;
+            }
+            oss << "]";
+        } else if (!options.exclude_empty) {
+            oss << "," << nl << indent << "\"tags\": []";
         }
     }
 
-    if (!tags.empty()) {
-        oss << "," << nl << indent << "\"tags\": [";
-        bool first = true;
-        for (const auto& tag : tags) {
-            if (!first) oss << ", ";
-            oss << "\"" << escapeJson(tag) << "\"";
-            first = false;
+    if (!attributes.empty() || !options.exclude_empty) {
+        if (!attributes.empty()) {
+            oss << "," << nl << indent << "\"attributes\": {" << nl;
+            bool first = true;
+            for (const auto& [key, value] : attributes) {
+                if (!first) oss << "," << nl;
+                oss << indent << indent << "\"" << escapeJson(key) << "\": ";
+                std::visit(JsonVisitor{oss, options, 1}, value);
+                first = false;
+            }
+            oss << nl << indent << "}";
+        } else if (!options.exclude_empty) {
+            oss << "," << nl << indent << "\"attributes\": {}";
         }
-        oss << "]";
-    }
-
-    if (!attributes.empty()) {
-        oss << "," << nl << indent << "\"attributes\": {" << nl;
-        bool first = true;
-        for (const auto& [key, value] : attributes) {
-            if (!first) oss << "," << nl;
-            oss << indent << indent << "\"" << escapeJson(key) << "\": ";
-            
-            std::visit([&oss](auto&& arg) {
-                using T = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<T, std::string>) {
-                    oss << "\"" << escapeJson(arg) << "\"";
-                } else if constexpr (std::is_same_v<T, bool>) {
-                    oss << (arg ? "true" : "false");
-                } else if constexpr (std::is_same_v<T, std::monostate>) {
-                    oss << "null";
-                } else { // Numeric types
-                    oss << arg;
-                }
-            }, value);
-            
-            first = false;
-        }
-        oss << nl << indent << "}";
     }
 
     oss << nl << "}";

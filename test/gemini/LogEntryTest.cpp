@@ -537,100 +537,212 @@ void testStreamOperator() {
         std::cout << "testHasAttributeValue passed" << std::endl;
     }
     
-    void testIteration1Features() {
-        std::cout << "Starting testIteration1Features..." << std::endl;
-        // 1. Process ID
-        uint64_t pid = LogEntry::currentProcessId();
-        assert(pid != 0);
-        
-        auto entry = LogEntry::create(LogLevel::INFO, "PID Test");
-        assert(entry.process_id == pid);
-        
-        entry.withProcessId(9999);
-        assert(entry.process_id == 9999);
+    void testNestedData() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Nested data test");
+    
+    LogList list = { "a", 1LL, true };
+    LogObject obj = { {"k1", "v1"}, {"k2", 2.2} };
+    
+    entry.withAttribute("list", list);
+    entry.withAttribute("obj", obj);
+    
+    assert(entry.attributes["list"].isList());
+    assert(entry.attributes["obj"].isObject());
+    
+    const LogList& l = entry.attributes["list"].asList();
+    assert(l.size() == 3);
+    assert(std::get<std::string>(l[0]) == "a");
+    
+    const LogObject& o = entry.attributes["obj"].asObject();
+    assert(o.at("k1") == LogValue("v1"));
+    
+    // JSON Round Trip for nested data
+    std::string json = entry.toJson();
+    auto result = LogEntry::fromJson(json);
+    assert(result.has_value());
+    assert(result->attributes["list"].isList());
+    assert(result->attributes["obj"].isObject());
+    assert(result->attributes["list"].asList().size() == 3);
+    assert(result->attributes["obj"].asObject().at("k1") == LogValue("v1"));
+    
+    std::cout << "testNestedData passed" << std::endl;
+}
 
-        std::string json = entry.toJson();
-        assert(json.find("\"process_id\": 9999") != std::string::npos);
+void testWithMetadata() {
+    LogEntry entry;
+    entry.level = LogLevel::INFO;
+    entry.message = "Metadata test";
+    
+    assert(entry.process_id == 0);
+    assert(entry.host_name.empty());
+    
+    entry.withMetadata();
+    
+    assert(entry.process_id != 0);
+    assert(!entry.host_name.empty());
+    assert(!entry.thread_id.empty());
+    assert(!entry.timestamp.empty());
+    
+    std::cout << "testWithMetadata passed" << std::endl;
+}
 
-        auto deserialized = LogEntry::fromJson(json);
-        assert(deserialized.has_value());
-        assert(deserialized->process_id == 9999);
+void testJsonOptionsIteration1() {
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Options test");
+    entry.withAttribute("a", 1LL);
+    entry.withTag("t1");
 
-        // 2. Attribute Management
-        entry.clearAttributes();
-        entry.withAttributes({
-            {"attr1", "val1"},
-            {"attr2", 100LL}
-        });
-        std::map<std::string, LogValue> more_attrs = {
-            {"attr3", true},
-            {"attr4", std::monostate{}} // Null value
-        };
-        entry.withAttributes(more_attrs);
+    LogEntry::JsonOptions opts;
+    opts.exclude_empty = true;
+    
+    // Test with content (should be there)
+    std::string json = entry.toJson(opts);
+    assert(json.find("\"attributes\"") != std::string::npos);
+    assert(json.find("\"tags\"") != std::string::npos);
 
-        assert(entry.getAttributeAsString("attr1") == "val1");
-        assert(entry.getAttributeAs<int64_t>("attr2") == 100);
-        assert(entry.getAttributeAs<bool>("attr3") == true);
-        assert(entry.hasAttribute("attr4"));
-        assert(!entry.getAttributeAs<std::string>("attr4").has_value()); // Should be empty/nullopt
+    // Test with empty (should be missing)
+    entry.clearAttributes();
+    entry.tags.clear();
+    json = entry.toJson(opts);
+    assert(json.find("\"attributes\"") == std::string::npos);
+    assert(json.find("\"tags\"") == std::string::npos);
 
-        entry.removeAttribute("attr1");
-        assert(!entry.hasAttribute("attr1"));
+    // Test Precision
+    entry.time_point = std::chrono::system_clock::now();
+    opts.timestamp_format = LogEntry::TimestampFormat::ISO8601;
+    
+    opts.precision = LogEntry::JsonOptions::Precision::Seconds;
+    json = entry.toJson(opts);
+    // Extract timestamp value: "timestamp": "VALUE"
+    auto ts_pos = json.find("\"timestamp\": \"");
+    assert(ts_pos != std::string::npos);
+    auto start = ts_pos + 14;
+    auto end = json.find("\"", start);
+    std::string ts_val = json.substr(start, end - start);
+    
+    // 2023-10-27T10:00:00Z - should not have '.'
+    assert(ts_val.find(".") == std::string::npos);
 
-        LogEntry otherEntry;
-        otherEntry.withAttribute("attr5", 5.5);
-        entry.mergeAttributes(otherEntry);
-        assert(entry.getAttributeAs<double>("attr5") == 5.5);
+    opts.precision = LogEntry::JsonOptions::Precision::Millis;
+    json = entry.toJson(opts);
+    ts_pos = json.find("\"timestamp\": \"");
+    start = ts_pos + 14;
+    end = json.find("\"", start);
+    ts_val = json.substr(start, end - start);
+    
+    // .123Z - should have '.'
+    assert(ts_val.find(".") != std::string::npos);
+    
+    opts.precision = LogEntry::JsonOptions::Precision::Nanos;
+    json = entry.toJson(opts);
+    // .123456789Z
+    std::cout << "Nanos JSON: " << json << std::endl;
 
-        // JSON Null check
-        std::string nullJson = entry.toJson();
-        assert(nullJson.find("\"attr4\": null") != std::string::npos);
+    std::cout << "testJsonOptionsIteration1 passed" << std::endl;
+}
 
-        // 3. JSON Timestamp Formats - now covered by testJsonFormatDetection
+void testNumericConversion() {
+    LogEntry entry;
+    entry.withAttribute("int_val", 42LL);
+    entry.withAttribute("uint_val", 100ULL);
+    
+    // Exact type
+    assert(entry.getAttributeAs<int64_t>("int_val") == 42);
+    
+    // Conversion to double
+    auto d_val = entry.getAttributeAs<double>("int_val");
+    assert(d_val.has_value());
+    assert(*d_val == 42.0);
+    
+    auto d_val2 = entry.getAttributeAs<double>("uint_val");
+    assert(d_val2.has_value());
+    assert(*d_val2 == 100.0);
+    
+    std::cout << "testNumericConversion passed" << std::endl;
+}
 
-        // 4. Factory fromMap - covered by testToMapRoundTrip
-        // The original testIteration1Features had some overlap, consolidating now.
+void testIteration1Features() {
+    std::cout << "Starting testIteration1Features..." << std::endl;
+    // 1. Process ID
+    uint64_t pid = LogEntry::currentProcessId();
+    assert(pid != 0);
+    
+    auto entry = LogEntry::create(LogLevel::INFO, "PID Test");
+    assert(entry.process_id == pid);
+    
+    entry.withProcessId(9999);
+    assert(entry.process_id == 9999);
 
-        std::cout << "testIteration1Features passed" << std::endl;
-    }
+    std::string json = entry.toJson();
+    assert(json.find("\"process_id\": 9999") != std::string::npos);
 
-    int main() {
+    auto deserialized = LogEntry::fromJson(json);
+    assert(deserialized.has_value());
+    assert(deserialized->process_id == 9999);
+
+    // 2. Attribute Management
+    entry.clearAttributes();
+    entry.withAttributes({
+        {"attr1", "val1"},
+        {"attr2", 100LL}
+    });
+    std::map<std::string, LogValue> more_attrs = {
+        {"attr3", true},
+        {"attr4", std::monostate{}} // Null value
+    };
+    entry.withAttributes(more_attrs);
+
+    assert(entry.getAttributeAsString("attr1") == "val1");
+    assert(entry.getAttributeAs<int64_t>("attr2") == 100);
+    assert(entry.getAttributeAs<bool>("attr3") == true);
+    assert(entry.hasAttribute("attr4"));
+    // Note: getAttributeAs<std::string>("attr4") returns nullopt for std::monostate
+    assert(!entry.getAttributeAs<std::string>("attr4").has_value());
+
+    entry.removeAttribute("attr1");
+    assert(!entry.hasAttribute("attr1"));
+
+    LogEntry otherEntry;
+    otherEntry.withAttribute("attr5", 5.5);
+    entry.mergeAttributes(otherEntry);
+    assert(entry.getAttributeAs<double>("attr5") == 5.5);
+
+    // JSON Null check
+    std::string nullJson = entry.toJson();
+    assert(nullJson.find("\"attr4\": null") != std::string::npos);
+
+    std::cout << "testIteration1Features passed" << std::endl;
+}
+
+int main() {
     
-        testLevelParsing();
+    testLevelParsing();
+    testLevelToString();
+    testTimeParsing();
+    testComparison();
+    testFormatting();
+    testStructuredLogging();
+    testFluentApi();
+    testStreamOperator();
+    testSeverityChecks();
+    testTracing();
+    testJsonDeserialization();
+    testCloning();
+    testToMapRoundTrip();
+    testJsonFormatDetection();
+    testValidation();
+    testEnvironmentMetadata();
+    testSeverityValue();
+    testHasAttributeValue();
     
-        testLevelToString();
-    
-        testTimeParsing();
-    
-        testComparison();
-    
-        testFormatting();
-    
-        testStructuredLogging();
-    
-        testFluentApi();
-    
-        testStreamOperator();
-    
-        testSeverityChecks();
-    
-        testTracing();
-    
-        testJsonDeserialization();
-    
-        testCloning();
-        testToMapRoundTrip();
-        testJsonFormatDetection();
-        testValidation();
-        testEnvironmentMetadata();
-        testSeverityValue();
-        testHasAttributeValue();
-        testIteration1Features(); // Keep for any remaining unique checks
-    
-        std::cout << "All LogEntry tests passed!" << std::endl;
-    
-        return 0;
-    
-    }
+    testIteration1Features();
+    testNestedData();
+    testWithMetadata();
+    testJsonOptionsIteration1();
+    testNumericConversion();
+
+    std::cout << "All LogEntry tests passed!" << std::endl;
+
+    return 0;
+}
     
     
