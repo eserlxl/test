@@ -341,10 +341,10 @@ namespace Filters
 {
     class LevelPredicate : public LogPredicate
     {
-        LogLevel level_;
+        SeverityLevel level_;
 
     public:
-        explicit LevelPredicate(LogLevel l) : level_(l) {}
+        explicit LevelPredicate(SeverityLevel l) : level_(l) {}
         bool test(const LogEntry &entry) const override { return entry.level == level_; }
         std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<LevelPredicate>(level_); }
     };
@@ -538,20 +538,20 @@ namespace Filters
 
     class MinLevelPredicate : public LogPredicate
     {
-        LogLevel min_level_;
+        SeverityLevel min_level_;
 
     public:
-        explicit MinLevelPredicate(LogLevel l) : min_level_(l) {}
-        bool test(const LogEntry &entry) const override { return entry.level != LogLevel::UNKNOWN && entry.level >= min_level_; }
+        explicit MinLevelPredicate(SeverityLevel l) : min_level_(l) {}
+        bool test(const LogEntry &entry) const override { return entry.level != SeverityLevel::UNKNOWN && entry.level >= min_level_; }
         std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<MinLevelPredicate>(min_level_); }
     };
 
     class MultiLevelPredicate : public LogPredicate
     {
-        std::vector<LogLevel> levels_;
+        std::vector<SeverityLevel> levels_;
 
     public:
-        explicit MultiLevelPredicate(std::vector<LogLevel> l) : levels_(std::move(l)) {}
+        explicit MultiLevelPredicate(std::vector<SeverityLevel> l) : levels_(std::move(l)) {}
         bool test(const LogEntry &entry) const override
         {
             return std::find(levels_.begin(), levels_.end(), entry.level) != levels_.end();
@@ -616,9 +616,9 @@ namespace Filters
         std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<MetadataPredicate>(file_, tid_); }
     };
 
-    std::unique_ptr<LogPredicate> Level(LogLevel l) { return std::make_unique<LevelPredicate>(l); }
-    std::unique_ptr<LogPredicate> MinLevel(LogLevel l) { return std::make_unique<MinLevelPredicate>(l); }
-    std::unique_ptr<LogPredicate> MultiLevel(std::vector<LogLevel> levels) { return std::make_unique<MultiLevelPredicate>(std::move(levels)); }
+    std::unique_ptr<LogPredicate> Level(SeverityLevel l) { return std::make_unique<LevelPredicate>(l); }
+    std::unique_ptr<LogPredicate> MinLevel(SeverityLevel l) { return std::make_unique<MinLevelPredicate>(l); }
+    std::unique_ptr<LogPredicate> MultiLevel(std::vector<SeverityLevel> levels) { return std::make_unique<MultiLevelPredicate>(std::move(levels)); }
 
     std::unique_ptr<LogPredicate> TimeRange(std::optional<std::chrono::system_clock::time_point> start, std::optional<std::chrono::system_clock::time_point> end)
     {
@@ -854,17 +854,17 @@ void ConsoleExporter::exportEntries(std::span<const LogEntry> entries)
             std::string color = "";
             switch (entry.level)
             {
-            case LogLevel::ERROR:
-            case LogLevel::CRITICAL:
+            case SeverityLevel::ERROR:
+            case SeverityLevel::FATAL:
                 color = "\033[31m";
                 break; // Red
-            case LogLevel::WARNING:
+            case SeverityLevel::WARN:
                 color = "\033[33m";
                 break; // Yellow
-            case LogLevel::INFO:
+            case SeverityLevel::INFO:
                 color = "\033[32m";
                 break; // Green
-            case LogLevel::DEBUG:
+            case SeverityLevel::DEBUG:
                 color = "\033[34m";
                 break; // Blue
             default:
@@ -1298,7 +1298,7 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
             if (!stats.first_timestamp)
                 stats.first_timestamp = entry.timestamp;
             stats.last_timestamp = entry.timestamp;
-            if (entry.level == LogLevel::ERROR)
+            if (entry.level == SeverityLevel::ERROR)
                 error_counts[entry.message]++;
             if (!entry.thread_id.empty())
                 stats.thread_distribution[entry.thread_id]++;
@@ -1437,7 +1437,7 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
             if (entry.timestamp.empty() && config_.timestamp_index > 0 && (size_t)config_.timestamp_index < match.size())
                 entry.timestamp = match[config_.timestamp_index].str();
 
-            if (entry.level == LogLevel::UNKNOWN && config_.level_index > 0 && (size_t)config_.level_index < match.size())
+            if (entry.level == SeverityLevel::UNKNOWN && config_.level_index > 0 && (size_t)config_.level_index < match.size())
                 entry.level = LogEntry::parseLevel(match[config_.level_index].str());
 
             if (entry.message.empty() && config_.message_index > 0 && (size_t)config_.message_index < match.size())
@@ -1492,9 +1492,9 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
         entry.level = LogEntry::parseLevel(match[1].str());
     }
     else
-        entry.level = LogLevel::UNKNOWN;
+        entry.level = SeverityLevel::UNKNOWN;
 
-    if (entry.level != LogLevel::UNKNOWN && !match.empty())
+    if (entry.level != SeverityLevel::UNKNOWN && !match.empty())
     {
         size_t message_start = match.position() + match.length();
         while (message_start < line.length() && (line[message_start] == ' ' || line[message_start] == ':' || line[message_start] == ']'))
@@ -1552,7 +1552,7 @@ void LogAnalyzer::analyze()
     for (const auto &entry : entries_)
     {
         stats.level_counts[entry.level]++;
-        if (entry.level == LogLevel::ERROR || entry.level == LogLevel::CRITICAL)
+        if (entry.level == SeverityLevel::ERROR || entry.level == SeverityLevel::FATAL)
         {
             error_counts[entry.message]++;
         }
@@ -1724,7 +1724,7 @@ std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate &predic
     return result;
 }
 
-std::string LogAnalyzer::levelToString(LogLevel level) const { return std::string(LogEntry::levelToString(level)); }
+std::string LogAnalyzer::levelToString(SeverityLevel level) const { return std::string(LogEntry::levelToString(level)); }
 
 std::expected<NumericStats, std::string> LogAnalyzer::analyzeMetric(
     std::string_view attribute_key, 

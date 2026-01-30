@@ -149,7 +149,7 @@ TEST_F(LogAnalyzerTest, GetEntriesSpan)
     analyzer.loadFile(testLogFile);
     auto span = analyzer.getEntriesSpan();
     EXPECT_EQ(span.size(), 5);
-    EXPECT_EQ(span[0].level, LogLevel::INFO);
+    EXPECT_EQ(span[0].level, SeverityLevel::INFO);
 }
 
 // --- Suite 2: ParsingConfigTest ---
@@ -179,13 +179,13 @@ TEST_F(LogAnalyzerTest, CustomFormatParsing)
     ASSERT_EQ(entries.size(), 2);
 
     EXPECT_EQ(entries[0].thread_id, "T1");
-    EXPECT_EQ(entries[0].level, LogLevel::INFO);
+    EXPECT_EQ(entries[0].level, SeverityLevel::INFO);
     EXPECT_EQ(entries[0].source_file, "main.cpp");
     EXPECT_EQ(entries[0].source_line, 10);
     EXPECT_EQ(entries[0].message, "Started");
 
     EXPECT_EQ(entries[1].thread_id, "T2");
-    EXPECT_EQ(entries[1].level, LogLevel::ERROR);
+    EXPECT_EQ(entries[1].level, SeverityLevel::ERROR);
 }
 
 TEST_F(LogAnalyzerTest, CustomTimeFormat)
@@ -224,7 +224,7 @@ TEST_F(LogAnalyzerTest, LevelRangeFilter)
     analyzer.loadFile(testLogFile);
 
     FilterOptions options;
-    options.level = LogLevel::WARNING; // Should include WARNING, ERROR, CRITICAL
+    options.level = SeverityLevel::WARN; // Should include WARNING, ERROR, CRITICAL
 
     auto filtered = analyzer.getFilteredEntries(options);
     EXPECT_EQ(filtered.size(), 3);
@@ -236,12 +236,12 @@ TEST_F(LogAnalyzerTest, MultiLevelSelect)
     analyzer.loadFile(testLogFile);
 
     FilterOptions options;
-    options.levels = {LogLevel::INFO, LogLevel::CRITICAL};
+    options.levels = {SeverityLevel::INFO, SeverityLevel::FATAL};
 
     auto filtered = analyzer.getFilteredEntries(options);
     EXPECT_EQ(filtered.size(), 2);
-    EXPECT_EQ(filtered[0].level, LogLevel::INFO);
-    EXPECT_EQ(filtered[1].level, LogLevel::CRITICAL);
+    EXPECT_EQ(filtered[0].level, SeverityLevel::INFO);
+    EXPECT_EQ(filtered[1].level, SeverityLevel::FATAL);
 }
 
 TEST_F(LogAnalyzerTest, KeywordSearch)
@@ -324,7 +324,7 @@ TEST_F(LogAnalyzerTest, InvertMatch)
     analyzer.loadFile(testLogFile);
 
     FilterOptions options;
-    options.level = LogLevel::ERROR; // Matches ERROR, CRITICAL
+    options.level = SeverityLevel::ERROR; // Matches ERROR, CRITICAL
     options.invert_match = true;     // Should match INFO, DEBUG, WARNING
 
     auto filtered = analyzer.getFilteredEntries(options);
@@ -337,7 +337,7 @@ TEST_F(LogAnalyzerTest, ComplexFilter)
     analyzer.loadFile(testLogFile);
 
     FilterOptions options;
-    options.level = LogLevel::WARNING; // WARNING, ERROR, CRITICAL
+    options.level = SeverityLevel::WARN; // WARNING, ERROR, CRITICAL
     options.keyword = "connection";    // "Connection failed", "Retrying connection"
     options.case_sensitive = false;
 
@@ -363,13 +363,13 @@ TEST_F(LogAnalyzerTest, StreamFilteredEntries)
 {
     LogAnalyzer analyzer;
     FilterOptions options;
-    options.level = LogLevel::ERROR;
+    options.level = SeverityLevel::ERROR;
 
     size_t count = 0;
     for (const auto &entry : analyzer.streamFilteredEntries(testLogFile, options))
     {
         count++;
-        EXPECT_GE(entry.level, LogLevel::ERROR);
+        EXPECT_GE(entry.level, SeverityLevel::ERROR);
     }
     EXPECT_EQ(count, 2);
 }
@@ -380,7 +380,7 @@ TEST_F(LogAnalyzerTest, AnalyzeStream)
     auto stats = analyzer.analyzeStream(testLogFile);
     ASSERT_TRUE(stats.has_value());
     EXPECT_EQ(stats->total_entries, 5);
-    EXPECT_EQ(stats->level_counts.at(LogLevel::ERROR), 1);
+    EXPECT_EQ(stats->level_counts.at(SeverityLevel::ERROR), 1);
 }
 
 // --- Suite 5: OutputTest ---
@@ -405,7 +405,7 @@ TEST_F(LogAnalyzerTest, FilteredEntriesJSON)
     analyzer.loadFile(testLogFile);
 
     FilterOptions options;
-    options.level = LogLevel::CRITICAL;
+    options.level = SeverityLevel::FATAL;
 
     std::stringstream ss;
     analyzer.writeFilteredEntries(ss, options, true);
@@ -421,12 +421,12 @@ TEST_F(LogAnalyzerTest, LogEntryFluentAPI)
 {
     auto tp = std::chrono::system_clock::now();
     LogEntry entry = LogEntry()
-                         .withLevel(LogLevel::WARNING)
+                         .withLevel(SeverityLevel::WARN)
                          .withMessage("Test message")
                          .withThreadId("1234")
                          .withTimestamp(tp);
 
-    EXPECT_EQ(entry.level, LogLevel::WARNING);
+    EXPECT_EQ(entry.level, SeverityLevel::WARN);
     EXPECT_EQ(entry.message, "Test message");
     EXPECT_EQ(entry.thread_id, "1234");
     EXPECT_EQ(entry.time_point, tp);
@@ -567,9 +567,9 @@ TEST_F(LogAnalyzerTest, DeepStatisticsTest)
 TEST_F(LogAnalyzerTest, LogEntryExtraTest)
 {
     auto loc = std::source_location::current();
-    LogEntry entry = LogEntry::create(LogLevel::ERROR, "Test Error", loc);
+    LogEntry entry = LogEntry::create(SeverityLevel::ERROR, "Test Error", loc);
 
-    EXPECT_EQ(entry.level, LogLevel::ERROR);
+    EXPECT_EQ(entry.level, SeverityLevel::ERROR);
     EXPECT_EQ(entry.message, "Test Error");
     EXPECT_FALSE(entry.source_file.empty());
     EXPECT_EQ(entry.source_line, loc.line());
@@ -1032,7 +1032,7 @@ TEST_F(LogAnalyzerTest, NamedCaptureGroupsIntegration)
     const auto &entries = analyzer.getEntries();
     ASSERT_EQ(entries.size(), 1);
     EXPECT_EQ(entries[0].timestamp, "2023-10-27 10:00:00");
-    EXPECT_EQ(entries[0].level, LogLevel::INFO);
+    EXPECT_EQ(entries[0].level, SeverityLevel::INFO);
     EXPECT_EQ(entries[0].thread_id, "thread-1");
     EXPECT_EQ(entries[0].message, "Message");
 }
@@ -1057,7 +1057,7 @@ TEST_F(LogAnalyzerTest, CsvExportFormat)
 
 TEST_F(LogAnalyzerTest, LogEntryJsonRoundTrip)
 {
-    LogEntry entry = LogEntry::create(LogLevel::ERROR, "Test Message")
+    LogEntry entry = LogEntry::create(SeverityLevel::ERROR, "Test Message")
                          .withAttribute("count", int64_t(42))
                          .withTag("test");
 
@@ -1075,12 +1075,12 @@ TEST_F(LogAnalyzerTest, LogEntryJsonRoundTrip)
 
 TEST_F(LogAnalyzerTest, PredicateComposition)
 {
-    LogEntry e1 = LogEntry().withLevel(LogLevel::INFO).withMessage("Apple");
-    LogEntry e2 = LogEntry().withLevel(LogLevel::ERROR).withMessage("Banana");
-    LogEntry e3 = LogEntry().withLevel(LogLevel::INFO).withMessage("Cherry");
+    LogEntry e1 = LogEntry().withLevel(SeverityLevel::INFO).withMessage("Apple");
+    LogEntry e2 = LogEntry().withLevel(SeverityLevel::ERROR).withMessage("Banana");
+    LogEntry e3 = LogEntry().withLevel(SeverityLevel::INFO).withMessage("Cherry");
 
     auto pred = Filters::And(
-        Filters::Level(LogLevel::INFO),
+        Filters::Level(SeverityLevel::INFO),
         Filters::Not(Filters::Keyword("Apple")));
 
     EXPECT_FALSE(pred->test(e1));
@@ -1100,7 +1100,7 @@ TEST_F(LogAnalyzerTest, BasicLQL)
     // level == ERROR
     auto entries = analyzer.query("level == ERROR");
     EXPECT_EQ(entries.size(), 1);
-    EXPECT_EQ(entries[0].level, LogLevel::ERROR);
+    EXPECT_EQ(entries[0].level, SeverityLevel::ERROR);
 
     // message exact match
     entries = analyzer.query("message == \"System started\""); 
@@ -1128,8 +1128,8 @@ TEST_F(LogAnalyzerTest, LQLComplex)
     bool found_error = false;
     bool found_critical = false;
     for(const auto& e : entries) {
-        if (e.level == LogLevel::ERROR) found_error = true;
-        if (e.level == LogLevel::CRITICAL) found_critical = true;
+        if (e.level == SeverityLevel::ERROR) found_error = true;
+        if (e.level == SeverityLevel::FATAL) found_critical = true;
     }
     EXPECT_TRUE(found_error);
     EXPECT_TRUE(found_critical);
@@ -1169,7 +1169,7 @@ TEST_F(LogAnalyzerTest, IndexingCorrectness)
     
     // Ensure query still works
     FilterOptions options;
-    options.level = LogLevel::ERROR;
+    options.level = SeverityLevel::ERROR;
     auto filtered = analyzer.getFilteredEntries(options);
     EXPECT_EQ(filtered.size(), 2);
 }

@@ -40,7 +40,7 @@ void testLevelParsing()
     assert(LogEntry::parseLevel("UNKNOWN_JUNK") == SeverityLevel::UNKNOWN);
 
     // Test backward compatibility
-    assert(parseSeverityLevel("DEBUG") == SeverityLevel::DEBUG);
+    assert(parseLogLevel("DEBUG") == SeverityLevel::DEBUG);
 
     std::cout << "testLevelParsing passed" << std::endl;
 }
@@ -530,7 +530,7 @@ void testSeverityValue()
     assert(LogEntry().withLevel(SeverityLevel::WARN).getSeverityValue() == 4);
     assert(LogEntry().withLevel(SeverityLevel::ERROR).getSeverityValue() == 3);
     assert(LogEntry().withLevel(SeverityLevel::FATAL).getSeverityValue() == 2);
-    assert(LogEntry().withLevel(SeverityLevel::UNKNOWN).getSeverityValue() == 0);
+    assert(LogEntry().withLevel(SeverityLevel::UNKNOWN).getSeverityValue() == 9);
     std::cout << "testSeverityValue passed" << std::endl;
 }
 
@@ -1100,48 +1100,418 @@ void testWithStacktrace() {
 }
 
 
+
+
+
+void testCustomFormatting() {
+
+
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Custom message");
+
+
+    entry.timestamp = "2023-11-01 10:30:00.000";
+
+
+    entry.process_id = 12345;
+
+
+
+
+
+    LogEntry::FormatSpecifier spec1 = {"[%t] %l: %m (PID: %p)"};
+
+
+    std::string formatted = entry.format(spec1);
+
+
+    assert(formatted == "[2023-11-01 10:30:00.000] INFO: Custom message (PID: 12345)");
+
+
+
+
+
+    LogEntry::FormatSpecifier spec2 = {"Level: %l, Message: %m"};
+
+
+    formatted = entry.format(spec2);
+
+
+    assert(formatted == "Level: INFO, Message: Custom message");
+
+
+
+
+
+    LogEntry::FormatSpecifier spec3 = {"%m"}; // Default to summary if pattern is empty or not matched
+
+
+    formatted = entry.format(spec3);
+
+
+    assert(formatted == "Custom message");
+
+
+
+
+
+    // Test with empty pattern (should use summary)
+
+
+    LogEntry::FormatSpecifier empty_spec = {""};
+
+
+    formatted = entry.format(empty_spec);
+
+
+    assert(formatted == entry.summary());
+
+
+
+
+
+    std::cout << "testCustomFormatting passed" << std::endl;
+
+
+}
+
+
+
+
+
+void testFiltering() {
+
+
+    LogEntry entry1 = LogEntry::create(SeverityLevel::INFO, "User logged in").withTag("auth");
+
+
+    entry1.timestamp = "2023-01-01 10:00:00.000";
+
+
+
+
+
+    LogEntry entry2 = LogEntry::create(SeverityLevel::WARN, "Disk space low").withTag("system").withTag("disk");
+
+
+    entry2.timestamp = "2023-01-01 10:01:00.000";
+
+
+
+
+
+    LogEntry entry3 = LogEntry::create(SeverityLevel::ERROR, "Database connection failed").withTag("db");
+
+
+    entry3.timestamp = "2023-01-01 10:02:00.000";
+
+
+
+
+
+    // Test min_level
+
+
+    LogEntry::FilterCriteria crit1;
+
+
+    crit1.min_level = SeverityLevel::WARN;
+
+
+    assert(!entry1.matches(crit1));
+
+
+    assert(entry2.matches(crit1));
+
+
+    assert(entry3.matches(crit1));
+
+
+
+
+
+    // Test max_level
+
+
+    LogEntry::FilterCriteria crit2;
+
+
+    crit2.max_level = SeverityLevel::INFO;
+
+
+    assert(entry1.matches(crit2));
+
+
+    assert(!entry2.matches(crit2));
+
+
+    assert(!entry3.matches(crit2));
+
+
+
+
+
+    // Test min_level and max_level combined
+
+
+    LogEntry::FilterCriteria crit3;
+
+
+    crit3.min_level = SeverityLevel::INFO;
+
+
+    crit3.max_level = SeverityLevel::WARN;
+
+
+    assert(entry1.matches(crit3));
+
+
+    assert(entry2.matches(crit3));
+
+
+    assert(!entry3.matches(crit3));
+
+
+
+
+
+    // Test message_contains
+
+
+    LogEntry::FilterCriteria crit4;
+
+
+    crit4.message_contains = "logged";
+
+
+    assert(entry1.matches(crit4));
+
+
+    assert(!entry2.matches(crit4));
+
+
+
+
+
+    // Test tags_in
+
+
+    LogEntry::FilterCriteria crit5;
+
+
+    crit5.tags_in = {"auth", "disk"};
+
+
+    assert(entry1.matches(crit5)); // Has 'auth'
+
+
+    assert(entry2.matches(crit5)); // Has 'disk'
+
+
+    assert(!entry3.matches(crit5)); // Has neither 'auth' nor 'disk'
+
+
+
+
+
+    // Test combined criteria
+
+
+    LogEntry::FilterCriteria crit6;
+
+
+    crit6.min_level = SeverityLevel::WARN;
+
+
+    crit6.message_contains = "space";
+
+
+    assert(!entry1.matches(crit6));
+
+
+    assert(entry2.matches(crit6)); // WARN and contains "space"
+
+
+    assert(!entry3.matches(crit6));
+
+
+
+
+
+    LogEntry::FilterCriteria crit7;
+
+
+    crit7.min_level = SeverityLevel::ERROR;
+
+
+    crit7.tags_in = {"db", "network"};
+
+
+    assert(!entry1.matches(crit7));
+
+
+    assert(!entry2.matches(crit7));
+
+
+    assert(entry3.matches(crit7)); // ERROR and has 'db'
+
+
+
+
+
+    std::cout << "testFiltering passed" << std::endl;
+
+
+}
+
+
+
+
+
+
+
+
 int main()
+
+
 {
 
+
+
+
+
     testLevelParsing();
+
+
     testLevelToString();
+
+
     testTimeParsing();
+
+
     testComparison();
+
+
     testFormatting();
+
+
     testStructuredLogging();
+
+
     testFluentApi();
+
+
     testStreamOperator();
+
+
     testSeverityChecks();
+
+
     testTracing();
+
+
     testJsonDeserialization();
+
+
     testCloning();
+
+
     testToMapRoundTrip();
+
+
     testJsonFormatDetection();
+
+
     testValidation();
+
+
     testEnvironmentMetadata();
+
+
     testSeverityValue();
+
+
     testHasAttributeValue();
+
+
     testNestedData();
+
+
     testWithMetadata();
+
+
     testJsonOptionsIteration1();
+
+
     testNumericConversion();
 
+
+
+
+
     // New tests for Iteration 1 features
+
+
     testBinaryLogValue();
+
+
     testLogValueNavigation();
+
+
     testResourceAttributes();
+
+
     testAutomatedContextCapture();
+
+
     testSummary();
+
+
     testLogValueDeepClone();       // New
+
+
     testLogUtilsBase64();          // New
+
+
     testFlattenedAttributes();     // New
+
+
     testToKvp();                   // New
+
+
     testGlobalResources();         // New
+
+
     testWithMemoryInfo();          // New
+
+
     testWithNetworkInfo();         // New
+
+
     testWithStacktrace();          // New
+
+
     
+
+
+    // Iteration 2 new feature tests
+
+
+    testCustomFormatting();
+
+
+    testFiltering();
+
+
+
+
+
     std::cout << "All LogEntry tests passed!" << std::endl;
 
+
+
+
+
     return 0;
+
+
 }

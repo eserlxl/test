@@ -235,7 +235,14 @@ struct LogEntry {
     bool matches(const FilterCriteria& criteria) const;
 
     template<typename Archive>
-    void serialize(Archive& ar);
+    void serialize(Archive& ar) {
+        // Placeholder implementation for serialization
+        // In a real scenario, this would interact with the Archive object
+        // to serialize member variables.
+        // For example, using a library like Cereal or Boost.Serialization:
+        // ar(timestamp, level, message, ...);
+        // This implementation does nothing.
+    }
     
     std::string summary() const; // New
     

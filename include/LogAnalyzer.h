@@ -23,7 +23,7 @@
 
 struct LogStatistics {
     size_t total_entries = 0;
-    std::map<LogLevel, size_t> level_counts;
+    std::map<SeverityLevel, size_t> level_counts;
     
     // Time analysis
     std::optional<std::string> first_timestamp;
@@ -129,7 +129,7 @@ struct NumericStats {
 };
 
 namespace Filters {
-    std::unique_ptr<LogPredicate> Level(LogLevel l);
+    std::unique_ptr<LogPredicate> Level(SeverityLevel l);
     std::unique_ptr<LogPredicate> Keyword(std::string k, bool case_sensitive = true);
     std::unique_ptr<LogPredicate> Regex(std::string pattern); 
     std::unique_ptr<LogPredicate> Attribute(std::string key, LogValue val);
@@ -138,8 +138,8 @@ namespace Filters {
     std::unique_ptr<LogPredicate> AnyKeyword(std::vector<std::string> keywords, bool case_sensitive = true);
     
     // Iteration 1 Additions
-    std::unique_ptr<LogPredicate> MinLevel(LogLevel l);
-    std::unique_ptr<LogPredicate> MultiLevel(std::vector<LogLevel> levels);
+    std::unique_ptr<LogPredicate> MinLevel(SeverityLevel l);
+    std::unique_ptr<LogPredicate> MultiLevel(std::vector<SeverityLevel> levels);
     std::unique_ptr<LogPredicate> TimeRange(
         std::optional<std::chrono::system_clock::time_point> start,
         std::optional<std::chrono::system_clock::time_point> end
@@ -154,14 +154,14 @@ namespace Filters {
 }
 
 struct FilterOptions {
-    std::optional<LogLevel> level;
+    std::optional<SeverityLevel> level;
     std::optional<std::string> keyword;
     std::optional<std::string> start_time;
     std::optional<std::string> end_time;
 
     bool case_sensitive = true;
     bool invert_match = false;
-    std::vector<LogLevel> levels;
+    std::vector<SeverityLevel> levels;
 
     std::optional<std::string> message_regex_pattern;
     
@@ -360,7 +360,7 @@ private:
     std::vector<LogEnricher> enrichers_;
 
     LogEntry parseLogLine(const std::string& line, size_t line_number = 0);
-    std::string levelToString(LogLevel level) const;
+    std::string levelToString(SeverityLevel level) const;
     bool matchFilter(const LogEntry& entry, const FilterOptions& options) const;
     void applyEnrichers(LogEntry& entry);
 
@@ -370,7 +370,7 @@ private:
 
     // Iteration 2: Indices
     mutable std::vector<size_t> timestamp_index_; // Indices sorted by time
-    mutable std::map<LogLevel, std::vector<size_t>> level_index_;
+    mutable std::map<SeverityLevel, std::vector<size_t>> level_index_;
     mutable std::map<std::string, std::map<LogValue, std::vector<size_t>>> attribute_indices_;
     
     // Helper to rebuild indices (if they exist)
