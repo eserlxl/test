@@ -1078,7 +1078,7 @@ void testWithStacktrace() {
     // Test JSON serialization
     std::string json = entry.toJson();
     // std::cout << "Stacktrace JSON: " << json << std::endl;
-    assert(json.find("\"stacktrace\":\"") != std::string::npos);
+    assert(json.find("\"stacktrace\": \"") != std::string::npos);
 
     // Test deserialization
     auto deserialized = LogEntry::fromJson(json);
