@@ -24,25 +24,36 @@
 #endif
 
 
+
 void testLevelParsing()
 {
-    assert(LogEntry::parseLevel("DEBUG") == LogLevel::DEBUG);
-    assert(LogEntry::parseLevel("dbg") == LogLevel::DEBUG);
-    assert(LogEntry::parseLevel("INFO") == LogLevel::INFO);
-    assert(LogEntry::parseLevel("error") == LogLevel::ERROR);
-    assert(LogEntry::parseLevel("UNKNOWN_JUNK") == LogLevel::UNKNOWN);
+    assert(LogEntry::parseLevel("TRACE") == SeverityLevel::TRACE);
+    assert(LogEntry::parseLevel("TRC") == SeverityLevel::TRACE);
+    assert(LogEntry::parseLevel("DEBUG") == SeverityLevel::DEBUG);
+    assert(LogEntry::parseLevel("dbg") == SeverityLevel::DEBUG);
+    assert(LogEntry::parseLevel("INFO") == SeverityLevel::INFO);
+    assert(LogEntry::parseLevel("error") == SeverityLevel::ERROR);
+    assert(LogEntry::parseLevel("WARN") == SeverityLevel::WARN);
+    assert(LogEntry::parseLevel("warning") == SeverityLevel::WARN);
+    assert(LogEntry::parseLevel("FATAL") == SeverityLevel::FATAL);
+    assert(LogEntry::parseLevel("FATAL") == SeverityLevel::FATAL);
+    assert(LogEntry::parseLevel("UNKNOWN_JUNK") == SeverityLevel::UNKNOWN);
 
     // Test backward compatibility
-    assert(parseLogLevel("DEBUG") == LogLevel::DEBUG);
+    assert(parseSeverityLevel("DEBUG") == SeverityLevel::DEBUG);
 
     std::cout << "testLevelParsing passed" << std::endl;
 }
 
 void testLevelToString()
 {
-    assert(LogEntry::levelToString(LogLevel::DEBUG) == "DEBUG");
-    assert(LogEntry::levelToString(LogLevel::INFO) == "INFO");
-    assert(LogEntry::levelToString(LogLevel::UNKNOWN) == "UNKNOWN");
+    assert(LogEntry::levelToString(SeverityLevel::TRACE) == "TRACE");
+    assert(LogEntry::levelToString(SeverityLevel::DEBUG) == "DEBUG");
+    assert(LogEntry::levelToString(SeverityLevel::INFO) == "INFO");
+    assert(LogEntry::levelToString(SeverityLevel::WARN) == "WARN");
+    assert(LogEntry::levelToString(SeverityLevel::ERROR) == "ERROR");
+    assert(LogEntry::levelToString(SeverityLevel::FATAL) == "FATAL");
+    assert(LogEntry::levelToString(SeverityLevel::UNKNOWN) == "UNKNOWN");
     std::cout << "testLevelToString passed" << std::endl;
 }
 
@@ -116,7 +127,7 @@ void testFormatting()
 {
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00.000";
-    entry.level = LogLevel::INFO;
+    entry.level = SeverityLevel::INFO;
     entry.message = "System started";
 
     std::string formatted = std::format("{}", entry);
@@ -129,7 +140,7 @@ void testStructuredLogging()
 {
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00.000";
-    entry.level = LogLevel::INFO;
+    entry.level = SeverityLevel::INFO;
     entry.message = "User login";
 
     // Test Attributes
@@ -213,12 +224,12 @@ void testStructuredLogging()
 
 void testFluentApi()
 {
-    auto entry = LogEntry::create(LogLevel::WARNING, "Something happened")
+    auto entry = LogEntry::create(SeverityLevel::WARN, "Something happened")
                      .withAttribute("error_code", int64_t{404})
                      .withAttribute("retry", false)
                      .withThreadId("thread-1");
 
-    assert(entry.level == LogLevel::WARNING);
+    assert(entry.level == SeverityLevel::WARN);
     assert(entry.message == "Something happened");
     assert(std::get<int64_t>(entry.attributes["error_code"]) == 404);
     assert(std::get<bool>(entry.attributes["retry"]) == false);
@@ -232,7 +243,7 @@ void testStreamOperator()
 {
     LogEntry entry;
     entry.timestamp = "2023-10-27 10:00:00";
-    entry.level = LogLevel::ERROR;
+    entry.level = SeverityLevel::ERROR;
     entry.message = "Stream test";
 
     std::ostringstream oss;
@@ -245,19 +256,19 @@ void testStreamOperator()
 void testSeverityChecks()
 {
 
-    assert(isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
+    assert(isAtLeast(SeverityLevel::ERROR, SeverityLevel::WARN));
 
-    assert(isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
+    assert(isAtLeast(SeverityLevel::WARN, SeverityLevel::WARN));
 
-    assert(!isAtLeast(LogLevel::INFO, LogLevel::WARNING));
+    assert(!isAtLeast(SeverityLevel::INFO, SeverityLevel::WARN));
 
-    assert(isError(LogLevel::ERROR));
+    assert(isError(SeverityLevel::ERROR));
 
-    assert(isError(LogLevel::CRITICAL));
+    assert(isError(SeverityLevel::FATAL));
 
-    assert(!isError(LogLevel::WARNING));
+    assert(!isError(SeverityLevel::WARN));
 
-    assert(!isError(LogLevel::INFO));
+    assert(!isError(SeverityLevel::INFO));
 
     std::cout << "testSeverityChecks passed" << std::endl;
 }
@@ -265,7 +276,7 @@ void testSeverityChecks()
 void testTracing()
 {
 
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Tracing test")
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Tracing test")
 
                          .withTraceContext("trace-123", "span-456");
 
@@ -345,7 +356,7 @@ void testJsonDeserialization()
 
     const LogEntry &entry = *result;
 
-    assert(entry.level == LogLevel::ERROR);
+    assert(entry.level == SeverityLevel::ERROR);
 
     assert(entry.message == "Test deserialization");
 
@@ -396,7 +407,7 @@ void testJsonDeserialization()
 
 void testCloning()
 {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Original");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Original");
     entry.withTag("original_tag");
 
     LogEntry clone = entry.clonedWithTag("new_tag");
@@ -409,7 +420,7 @@ void testCloning()
 
 void testToMapRoundTrip()
 {
-    LogEntry original = LogEntry::create(LogLevel::INFO, "Map Round Trip Test");
+    LogEntry original = LogEntry::create(SeverityLevel::INFO, "Map Round Trip Test");
     original.withAttribute("int_attr", int64_t{123})
         .withAttribute("double_attr", 45.67)
         .withAttribute("bool_attr", true)
@@ -447,7 +458,7 @@ void testJsonFormatDetection()
     std::string iso_json = R"({"timestamp": "2023-10-27T10:00:00.123Z", "level": "INFO", "message": "ISO test"})";
     auto iso_entry_res = LogEntry::fromJson(iso_json);
     assert(iso_entry_res.has_value());
-    assert(iso_entry_res->level == LogLevel::INFO);
+    assert(iso_entry_res->level == SeverityLevel::INFO);
     assert(iso_entry_res->message == "ISO test");
     // Verify time_point is set
     assert(iso_entry_res->time_point.time_since_epoch().count() != 0);
@@ -457,15 +468,15 @@ void testJsonFormatDetection()
     std::string unix_json = R"({"timestamp": 1698400800123, "level": "DEBUG", "message": "UnixMillis test"})";
     auto unix_entry_res = LogEntry::fromJson(unix_json);
     assert(unix_entry_res.has_value());
-    assert(unix_entry_res->level == LogLevel::DEBUG);
+    assert(unix_entry_res->level == SeverityLevel::DEBUG);
     assert(unix_entry_res->message == "UnixMillis test");
     assert(unix_entry_res->time_point.time_since_epoch().count() != 0);
 
     // Test default format (like current generatedTimestampString)
-    std::string default_json = R"({"timestamp": "2023-10-27 10:00:00.456", "level": "WARNING", "message": "Default format test"})";
+    std::string default_json = R"({"timestamp": "2023-10-27 10:00:00.456", "level": "WARN", "message": "Default format test"})";
     auto default_entry_res = LogEntry::fromJson(default_json);
     assert(default_entry_res.has_value());
-    assert(default_entry_res->level == LogLevel::WARNING);
+    assert(default_entry_res->level == SeverityLevel::WARN);
     assert(default_entry_res->message == "Default format test");
     assert(default_entry_res->time_point.time_since_epoch().count() != 0);
 
@@ -477,13 +488,13 @@ void testValidation()
     LogEntry entry;
     assert(!entry.isValid()); // No level, no message
 
-    entry.level = LogLevel::INFO;
+    entry.level = SeverityLevel::INFO;
     assert(!entry.isValid()); // No message
 
     entry.message = "Hello";
     assert(entry.isValid()); // Has level and message
 
-    entry.level = LogLevel::UNKNOWN;
+    entry.level = SeverityLevel::UNKNOWN;
     assert(!entry.isValid()); // Level is UNKNOWN
 
     std::cout << "testValidation passed" << std::endl;
@@ -491,7 +502,7 @@ void testValidation()
 
 void testEnvironmentMetadata()
 {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Env Test")
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Env Test")
                          .withHost("my-server")
                          .withApp("backend-service");
 
@@ -514,12 +525,12 @@ void testEnvironmentMetadata()
 
 void testSeverityValue()
 {
-    assert(LogEntry().withLevel(LogLevel::DEBUG).getSeverityValue() == 7);
-    assert(LogEntry().withLevel(LogLevel::INFO).getSeverityValue() == 6);
-    assert(LogEntry().withLevel(LogLevel::WARNING).getSeverityValue() == 4);
-    assert(LogEntry().withLevel(LogLevel::ERROR).getSeverityValue() == 3);
-    assert(LogEntry().withLevel(LogLevel::CRITICAL).getSeverityValue() == 2);
-    assert(LogEntry().withLevel(LogLevel::UNKNOWN).getSeverityValue() == 0);
+    assert(LogEntry().withLevel(SeverityLevel::DEBUG).getSeverityValue() == 7);
+    assert(LogEntry().withLevel(SeverityLevel::INFO).getSeverityValue() == 6);
+    assert(LogEntry().withLevel(SeverityLevel::WARN).getSeverityValue() == 4);
+    assert(LogEntry().withLevel(SeverityLevel::ERROR).getSeverityValue() == 3);
+    assert(LogEntry().withLevel(SeverityLevel::FATAL).getSeverityValue() == 2);
+    assert(LogEntry().withLevel(SeverityLevel::UNKNOWN).getSeverityValue() == 0);
     std::cout << "testSeverityValue passed" << std::endl;
 }
 
@@ -543,7 +554,7 @@ void testHasAttributeValue()
 
 void testNestedData()
 {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Nested data test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Nested data test");
 
     LogList list = {"a", 1LL, true};
     LogObject obj = {{"k1", "v1"}, {"k2", 2.2}};
@@ -576,7 +587,7 @@ void testNestedData()
 void testWithMetadata()
 {
     LogEntry entry;
-    entry.level = LogLevel::INFO;
+    entry.level = SeverityLevel::INFO;
     entry.message = "Metadata test";
 
     assert(entry.process_id == 0);
@@ -594,7 +605,7 @@ void testWithMetadata()
 
 void testJsonOptionsIteration1()
 {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Options test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Options test");
     entry.withAttribute("a", 1LL);
     entry.withTag("t1");
 
@@ -675,7 +686,7 @@ void testIteration1Features()
     uint64_t pid = LogEntry::currentProcessId();
     assert(pid != 0);
 
-    auto entry = LogEntry::create(LogLevel::INFO, "PID Test");
+    auto entry = LogEntry::create(SeverityLevel::INFO, "PID Test");
     assert(entry.process_id == pid);
 
     entry.withProcessId(9999);
@@ -728,7 +739,7 @@ void testBinaryLogValue() {
     assert(binaryVal.asBinary() == binaryData);
 
     // Test LogEntry with binary data
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Binary data test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Binary data test");
     entry.withAttribute("payload", binaryVal);
 
     std::string json = entry.toJson();
@@ -745,7 +756,7 @@ void testBinaryLogValue() {
     assert(deserialized->getAttribute("payload")->asBinary() == binaryData);
 
     // Test base64 round trip for binary data in LogValue::find
-    LogEntry entry_with_nested_binary = LogEntry::create(LogLevel::INFO, "Nested binary");
+    LogEntry entry_with_nested_binary = LogEntry::create(SeverityLevel::INFO, "Nested binary");
     LogObject nested_obj;
     nested_obj["key"] = LogValue(binaryData);
     entry_with_nested_binary.withAttribute("data", nested_obj);
@@ -763,7 +774,7 @@ void testBinaryLogValue() {
 }
 
 void testLogValueNavigation() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Navigation test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Navigation test");
     LogObject user_profile;
     user_profile["id"] = 123LL;
     user_profile["name"] = "testUser";
@@ -799,7 +810,7 @@ void testLogValueNavigation() {
 }
 
 void testResourceAttributes() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Resource test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Resource test");
     entry.withResource("service.name", "my-app")
          .withResource("host.arch", "x86_64");
 
@@ -835,7 +846,7 @@ void testResourceAttributes() {
 }
 
 void testAutomatedContextCapture() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Auto context test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Auto context test");
     entry.withEnvironment();
     entry.withSystemInfo();
 
@@ -862,7 +873,7 @@ void testAutomatedContextCapture() {
 }
 
 void testSummary() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "This is a test message");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "This is a test message");
     entry.timestamp = "1970-01-01 00:00:00.000"; // Explicitly set string to avoid timezone issues
     
     std::string expected_summary = "[1970-01-01 00:00:00.000] [INFO] This is a test message";
@@ -933,7 +944,7 @@ void testLogUtilsBase64() {
 }
 
 void testFlattenedAttributes() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Flatten test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Flatten test");
     entry.withAttribute("user.id", 123LL); // flat already
     entry.withAttribute("user.name", "john_doe");
     entry.withAttribute("status", "active");
@@ -972,7 +983,7 @@ void testFlattenedAttributes() {
 }
 
 void testToKvp() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "KVP Test Message");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "KVP Test Message");
     entry.withAttribute("user.id", 123LL);
     entry.withAttribute("user.name", "jane_doe");
     entry.withAttribute("flag", true);
@@ -998,7 +1009,7 @@ void testGlobalResources() {
     LogEntry::setGlobalResource("service.version", "1.0.0");
     LogEntry::setGlobalResource("deploy.env", "test");
 
-    LogEntry entry1 = LogEntry::create(LogLevel::INFO, "Test 1");
+    LogEntry entry1 = LogEntry::create(SeverityLevel::INFO, "Test 1");
     assert(entry1.resources.at("service.version").as<std::string>() == "1.0.0");
     assert(entry1.resources.at("deploy.env").as<std::string>() == "test");
 
@@ -1007,18 +1018,18 @@ void testGlobalResources() {
     assert(entry1.resources.at("service.version").as<std::string>() == "2.0.0");
 
     // New entry should still get global resources
-    LogEntry entry2 = LogEntry::create(LogLevel::DEBUG, "Test 2");
+    LogEntry entry2 = LogEntry::create(SeverityLevel::DEBUG, "Test 2");
     assert(entry2.resources.at("service.version").as<std::string>() == "1.0.0");
 
     LogEntry::clearGlobalResources();
-    LogEntry entry3 = LogEntry::create(LogLevel::WARNING, "Test 3");
+    LogEntry entry3 = LogEntry::create(SeverityLevel::WARN, "Test 3");
     assert(entry3.resources.find("service.version") == entry3.resources.end());
 
     std::cout << "testGlobalResources passed" << std::endl;
 }
 
 void testWithMemoryInfo() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Memory Info Test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Memory Info Test");
     entry.withMemoryInfo();
 
     // Just check for presence, actual values vary by system and time
@@ -1037,7 +1048,7 @@ void testWithMemoryInfo() {
 }
 
 void testWithNetworkInfo() {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Network Info Test");
+    LogEntry entry = LogEntry::create(SeverityLevel::INFO, "Network Info Test");
     entry.withNetworkInfo();
 
     // Check if at least one network interface is captured (e.g., localhost)
@@ -1062,7 +1073,7 @@ void testWithNetworkInfo() {
 }
 
 void testWithStacktrace() {
-    LogEntry entry = LogEntry::create(LogLevel::ERROR, "Stacktrace Test");
+    LogEntry entry = LogEntry::create(SeverityLevel::ERROR, "Stacktrace Test");
     
     // Capture stacktrace, skipping this test function and potentially the LogEntry::create frame
     entry.withStacktrace(0, 10); // Skip 0, max 10 frames

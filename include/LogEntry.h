@@ -25,22 +25,23 @@
 #define HAS_STACKTRACE 1
 #endif
 
-enum class LogLevel {
-    DEBUG = 0,
-    INFO = 1,
-    WARNING = 2,
-    ERROR = 3,
-    CRITICAL = 4,
-    UNKNOWN = 5
+enum class SeverityLevel {
+    TRACE = 0,
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4,
+    FATAL = 5,
+    UNKNOWN = 6
 };
 
-inline bool isAtLeast(LogLevel level, LogLevel minimum) noexcept {
-    if (level == LogLevel::UNKNOWN || minimum == LogLevel::UNKNOWN) return false;
+inline bool isAtLeast(SeverityLevel level, SeverityLevel minimum) noexcept {
+    if (level == SeverityLevel::UNKNOWN || minimum == SeverityLevel::UNKNOWN) return false;
     return static_cast<int>(level) >= static_cast<int>(minimum);
 }
 
-inline bool isError(LogLevel level) noexcept {
-    return level == LogLevel::ERROR || level == LogLevel::CRITICAL;
+inline bool isError(SeverityLevel level) noexcept {
+    return level == SeverityLevel::ERROR || level == SeverityLevel::FATAL;
 }
 
 #include <cstddef> // for std::byte
@@ -124,11 +125,22 @@ struct LogEntry {
         Precision precision = Precision::Millis; 
     };
 
+    struct FormatSpecifier {
+        std::string pattern;
+    };
+
+    struct FilterCriteria {
+        std::optional<SeverityLevel> min_level;
+        std::optional<SeverityLevel> max_level;
+        std::optional<std::string> message_contains;
+        std::optional<std::set<std::string>> tags_in;
+    };
+
     static const JsonOptions defaultJsonOptions; 
 
     // Existing fields (Public API Compat)
     std::string timestamp;
-    LogLevel level = LogLevel::UNKNOWN;
+    SeverityLevel level = SeverityLevel::UNKNOWN;
     std::string message;
     std::string raw_line;
 
@@ -158,8 +170,8 @@ struct LogEntry {
     LogEntry();
 
     // Static helpers
-    static LogLevel parseLevel(std::string_view level_str);
-    static std::string_view levelToString(LogLevel level);
+    static SeverityLevel parseLevel(std::string_view level_str);
+    static std::string_view levelToString(SeverityLevel level);
     static uint64_t currentProcessId(); 
     static std::string currentHostName(); 
 
@@ -168,7 +180,7 @@ struct LogEntry {
     static void clearGlobalResources();
 
     // Factory methods
-    static LogEntry create(LogLevel level, std::string_view message, 
+    static LogEntry create(SeverityLevel level, std::string_view message, 
                           std::source_location loc = std::source_location::current());
     static LogEntry fromMap(const std::map<std::string, LogValue>& data); 
     
@@ -176,7 +188,7 @@ struct LogEntry {
     static std::expected<LogEntry, std::string> fromJson(std::string_view json_str);
 
     // Fluent API
-    LogEntry& withLevel(LogLevel l);
+    LogEntry& withLevel(SeverityLevel l);
     LogEntry& withMessage(std::string_view msg);
     LogEntry& withMetadata(); 
     LogEntry& withAttribute(std::string key, LogValue value);
@@ -218,6 +230,12 @@ struct LogEntry {
     
     bool hasAttribute(const std::string& key) const;
     std::optional<LogValue> getAttribute(const std::string& key) const;
+
+    std::string format(const FormatSpecifier& specifier) const;
+    bool matches(const FilterCriteria& criteria) const;
+
+    template<typename Archive>
+    void serialize(Archive& ar);
     
     std::string summary() const; // New
     
@@ -286,6 +304,6 @@ struct std::formatter<LogEntry> {
 };
 
 // Backward compatibility
-LogLevel parseLogLevel(const std::string& level_str);
+SeverityLevel parseLogLevel(const std::string& level_str);
 
 #endif // LOG_ENTRY_H

@@ -117,7 +117,7 @@ static std::shared_mutex global_resources_mutex;
 
 const LogEntry::JsonOptions LogEntry::defaultJsonOptions;
 
-LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
+LogEntry::LogEntry() : level(SeverityLevel::UNKNOWN) {}
 
 // LogValue helpers
 LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
@@ -215,51 +215,57 @@ LogValue& LogValue::operator[](size_t index)
     throw std::runtime_error("LogValue is not a list");
 }
 
-LogLevel LogEntry::parseLevel(std::string_view level_str)
+SeverityLevel LogEntry::parseLevel(std::string_view level_str)
 {
     std::string upper_level(level_str);
     std::transform(upper_level.begin(), upper_level.end(), upper_level.begin(),
                    [](unsigned char c)
                    { return std::toupper(c); });
 
-    if (upper_level == "DEBUG" || upper_level == "DBG")
+    if (upper_level == "TRACE" || upper_level == "TRC")
     {
-        return LogLevel::DEBUG;
+        return SeverityLevel::TRACE;
+    }
+    else if (upper_level == "DEBUG" || upper_level == "DBG")
+    {
+        return SeverityLevel::DEBUG;
     }
     else if (upper_level == "INFO" || upper_level == "INF")
     {
-        return LogLevel::INFO;
+        return SeverityLevel::INFO;
     }
-    else if (upper_level == "WARNING" || upper_level == "WARN")
+    else if (upper_level == "WARNING" || upper_level == "WARN" || upper_level == "WRN")
     {
-        return LogLevel::WARNING;
+        return SeverityLevel::WARN;
     }
     else if (upper_level == "ERROR" || upper_level == "ERR")
     {
-        return LogLevel::ERROR;
+        return SeverityLevel::ERROR;
     }
-    else if (upper_level == "CRITICAL" || upper_level == "CRIT" || upper_level == "FATAL")
+    else if (upper_level == "CRITICAL" || upper_level == "CRIT" || upper_level == "FATAL" || upper_level == "FTL")
     {
-        return LogLevel::CRITICAL;
+        return SeverityLevel::FATAL;
     }
 
-    return LogLevel::UNKNOWN;
+    return SeverityLevel::UNKNOWN;
 }
 
-std::string_view LogEntry::levelToString(LogLevel level)
+std::string_view LogEntry::levelToString(SeverityLevel level)
 {
     switch (level)
     {
-    case LogLevel::DEBUG:
+    case SeverityLevel::TRACE:
+        return "TRACE";
+    case SeverityLevel::DEBUG:
         return "DEBUG";
-    case LogLevel::INFO:
+    case SeverityLevel::INFO:
         return "INFO";
-    case LogLevel::WARNING:
-        return "WARNING";
-    case LogLevel::ERROR:
+    case SeverityLevel::WARN:
+        return "WARN";
+    case SeverityLevel::ERROR:
         return "ERROR";
-    case LogLevel::CRITICAL:
-        return "CRITICAL";
+    case SeverityLevel::FATAL:
+        return "FATAL";
     default:
         return "UNKNOWN";
     }
@@ -304,7 +310,7 @@ void LogEntry::clearGlobalResources()
     global_resources.clear();
 }
 
-LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_location loc)
+LogEntry LogEntry::create(SeverityLevel level, std::string_view message, std::source_location loc)
 {
     LogEntry entry;
     entry.level = level;
@@ -314,7 +320,7 @@ LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_
     return entry;
 }
 
-LogEntry &LogEntry::withLevel(LogLevel l)
+LogEntry &LogEntry::withLevel(SeverityLevel l)
 {
     level = l;
     return *this;
@@ -569,6 +575,52 @@ LogEntry &LogEntry::withStacktrace(size_t skip, size_t max_depth)
     stacktrace = "Stacktrace not supported on this platform/compiler";
 #endif
     return *this;
+}
+
+std::string LogEntry::format(const FormatSpecifier& specifier) const
+{
+    if (specifier.pattern.empty()) {
+        return summary();
+    }
+    
+    // Simple pattern replacement for demonstration
+    // Patterns: %t (timestamp), %l (level), %m (message), %p (process_id)
+    std::string result = specifier.pattern;
+    auto replaceAll = [&](std::string_view placeholder, std::string_view value) {
+        size_t pos = 0;
+        while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+            result.replace(pos, placeholder.length(), value);
+            pos += value.length();
+        }
+    };
+
+    replaceAll("%t", timestamp.empty() ? generatedTimestampString() : timestamp);
+    replaceAll("%l", levelToString(level));
+    replaceAll("%m", message);
+    replaceAll("%p", std::to_string(process_id));
+    
+    return result;
+}
+
+bool LogEntry::matches(const FilterCriteria& criteria) const
+{
+    if (criteria.min_level && !isAtLeast(level, *criteria.min_level)) return false;
+    if (criteria.max_level && static_cast<int>(level) > static_cast<int>(*criteria.max_level)) return false;
+    
+    if (criteria.message_contains && message.find(*criteria.message_contains) == std::string::npos) return false;
+    
+    if (criteria.tags_in) {
+        bool found = false;
+        for (const auto& tag : *criteria.tags_in) {
+            if (hasTag(tag)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    
+    return true;
 }
 
 std::string LogEntry::summary() const
@@ -1949,27 +2001,29 @@ bool LogEntry::operator==(const LogEntry &other) const
 
 bool LogEntry::isValid() const noexcept
 {
-    return level != LogLevel::UNKNOWN && !message.empty();
+    return level != SeverityLevel::UNKNOWN && !message.empty();
 }
 
 int LogEntry::getSeverityValue() const
 {
+    // Following RFC 5424 severity levels (0-7, lower is more severe)
+    // Emergency: 0, Alert: 1, Critical: 2, Error: 3, Warning: 4, Notice: 5, Informational: 6, Debug: 7
     switch (level)
     {
-    case LogLevel::DEBUG:
-        return 7;
-    case LogLevel::INFO:
-        return 6;
-    case LogLevel::WARNING:
-        return 4;
-    case LogLevel::ERROR:
+    case SeverityLevel::FATAL:
+        return 2; // Critical
+    case SeverityLevel::ERROR:
         return 3;
-    case LogLevel::CRITICAL:
-        return 2;
+    case SeverityLevel::WARN:
+        return 4;
+    case SeverityLevel::INFO:
+        return 6;
+    case SeverityLevel::DEBUG:
+        return 7;
+    case SeverityLevel::TRACE:
+        return 8; // Custom: Trace is less severe than Debug
     default:
-        return 0; // Emergency/Unknown? treating UNKNOWN as 0 might be misleading but fits the return type.
-                  // Actually, RFC 5424: 0 is Emergency.
-                  // Let's assume Unknown is not standard.
+        return 9; // Custom: Unknown
     }
 }
 
@@ -1981,7 +2035,7 @@ std::ostream &operator<<(std::ostream &os, const LogEntry &entry)
     return os;
 }
 
-LogLevel parseLogLevel(const std::string &level_str)
+SeverityLevel parseLogLevel(const std::string &level_str)
 {
     return LogEntry::parseLevel(level_str);
 }
