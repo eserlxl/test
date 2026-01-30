@@ -5,16 +5,24 @@
 #include <sstream>
 #include <ctime>
 #include <typeinfo>
+#include <shared_mutex>
+#include <mutex>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <process.h>
+#include <psapi.h>
 #else
 #include <unistd.h>
+#include <sys/resource.h>
+#include <ifaddrs.h>
+#include <netdb.h>
 #endif
 
-static std::string base64_encode(const std::vector<std::byte>& data) {
+namespace LogUtils {
+
+std::string base64Encode(const std::vector<std::byte>& data) {
     static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string ret;
     int i = 0;
@@ -55,7 +63,7 @@ static std::string base64_encode(const std::vector<std::byte>& data) {
     return ret;
 }
 
-static std::vector<std::byte> base64_decode(std::string_view const& encoded_string) {
+std::vector<std::byte> base64Decode(std::string_view encoded_string) {
     static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     auto is_base64 = [](unsigned char c) -> bool {
         return (isalnum(c) || (c == '+') || (c == '/'));
@@ -101,6 +109,12 @@ static std::vector<std::byte> base64_decode(std::string_view const& encoded_stri
     return ret;
 }
 
+} // namespace LogUtils
+
+// Storage for Global Resources
+static std::map<std::string, LogValue> global_resources;
+static std::shared_mutex global_resources_mutex;
+
 const LogEntry::JsonOptions LogEntry::defaultJsonOptions;
 
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
@@ -127,6 +141,26 @@ const LogObject &LogValue::asObject() const
 const LogBinary &LogValue::asBinary() const
 {
     return std::get<LogBinary>(*this);
+}
+
+LogValue LogValue::deepClone() const
+{
+    if (isList()) {
+        LogList newList;
+        const auto& list = asList();
+        newList.reserve(list.size());
+        for (const auto& item : list) {
+            newList.push_back(item.deepClone());
+        }
+        return LogValue(std::move(newList));
+    } else if (isObject()) {
+        LogObject newObj;
+        for (const auto& [key, value] : asObject()) {
+            newObj[key] = value.deepClone();
+        }
+        return LogValue(std::move(newObj));
+    }
+    return *this;
 }
 
 std::optional<LogValue> LogValue::find(std::string_view path) const
@@ -258,6 +292,18 @@ std::string LogEntry::currentHostName()
     return "unknown";
 }
 
+void LogEntry::setGlobalResource(std::string key, LogValue value)
+{
+    std::unique_lock lock(global_resources_mutex);
+    global_resources[std::move(key)] = std::move(value);
+}
+
+void LogEntry::clearGlobalResources()
+{
+    std::unique_lock lock(global_resources_mutex);
+    global_resources.clear();
+}
+
 LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_location loc)
 {
     LogEntry entry;
@@ -303,6 +349,16 @@ LogEntry &LogEntry::withMetadata()
         std::stringstream ss;
         ss << std::this_thread::get_id();
         thread_id = ss.str();
+    }
+
+    // Merge global resources
+    {
+        std::shared_lock lock(global_resources_mutex);
+        for (const auto& [key, value] : global_resources) {
+            if (resources.find(key) == resources.end()) {
+                resources[key] = value.deepClone();
+            }
+        }
     }
 
     return *this;
@@ -445,6 +501,72 @@ LogEntry &LogEntry::withSystemInfo()
     withResource("sys.os", std::string("macOS"));
 #else
     withResource("sys.os", std::string("unknown"));
+#endif
+    return *this;
+}
+
+LogEntry &LogEntry::withMemoryInfo()
+{
+#if defined(_WIN32) || defined(_WIN64)
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+        withResource("sys.memory.rss", static_cast<int64_t>(pmc.WorkingSetSize));
+        withResource("sys.memory.vmem", static_cast<int64_t>(pmc.PrivateUsage));
+    }
+#elif defined(__linux__)
+    long rss = 0;
+    FILE* fp = fopen("/proc/self/statm", "r");
+    if (fp) {
+        if (fscanf(fp, "%*s%ld", &rss) == 1) {
+            withResource("sys.memory.rss", static_cast<int64_t>(rss * sysconf(_SC_PAGESIZE)));
+        }
+        fclose(fp);
+    }
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        withResource("sys.memory.maxrss", static_cast<int64_t>(usage.ru_maxrss * 1024));
+    }
+#endif
+    return *this;
+}
+
+LogEntry &LogEntry::withNetworkInfo()
+{
+#if !defined(_WIN32) && !defined(_WIN64)
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) return *this;
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+        int family = ifa->ifa_addr->sa_family;
+        if (family == AF_INET || family == AF_INET6) {
+            char host[NI_MAXHOST];
+            int s = getnameinfo(ifa->ifa_addr,
+                    (family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6),
+                    host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+            if (s == 0) {
+                withResource(std::string("sys.net.") + ifa->ifa_name, std::string(host));
+            }
+        }
+    }
+    freeifaddrs(ifaddr);
+#endif
+    return *this;
+}
+
+LogEntry &LogEntry::withStacktrace(size_t skip, size_t max_depth)
+{
+#ifdef HAS_STACKTRACE
+    auto st = std::stacktrace::current(skip + 1);
+    std::stringstream ss;
+    size_t count = 0;
+    for (const auto& entry : st) {
+        if (count++ >= max_depth) break;
+        ss << entry.description() << " at " << entry.source_file() << ":" << entry.source_line() << "\n";
+    }
+    stacktrace = ss.str();
+#else
+    stacktrace = "Stacktrace not supported on this platform/compiler";
 #endif
     return *this;
 }
@@ -819,7 +941,7 @@ static std::expected<LogValue, std::string> parseLogValue(std::string_view::iter
                             current_it = skipWhitespace(current_it, end);
                             if (current_it != end && *current_it == '}') {
                                 it = current_it + 1; // Advance main iterator past the object
-                                return LogValue(base64_decode(*base64_str_res));
+                                return LogValue(LogUtils::base64Decode(*base64_str_res));
                             }
                         }
                     }
@@ -1066,6 +1188,10 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
         {
             entry.source_line = static_cast<int>(std::get<int64_t>(value));
         }
+        else if (key == "stacktrace" && std::holds_alternative<std::string>(value))
+        {
+            entry.stacktrace = std::get<std::string>(value);
+        }
         else if (key == "tags" && std::holds_alternative<std::shared_ptr<LogList>>(value))
         {
             auto list = std::get<std::shared_ptr<LogList>>(value);
@@ -1114,6 +1240,8 @@ std::map<std::string, LogValue> LogEntry::toMap() const
         m["source_function"] = source_function;
     if (source_line != 0)
         m["source_line"] = static_cast<int64_t>(source_line);
+    if (!stacktrace.empty())
+        m["stacktrace"] = stacktrace;
 
     if (!tags.empty())
     {
@@ -1133,6 +1261,40 @@ std::map<std::string, LogValue> LogEntry::toMap() const
         m[key] = value;
     }
     return m;
+}
+
+static void flattenRecursive(const LogValue& value, std::string prefix, std::string_view separator, std::map<std::string, std::string>& result) {
+    if (value.isObject()) {
+        for (const auto& [key, val] : value.asObject()) {
+            std::string new_prefix = prefix.empty() ? key : (prefix + std::string(separator) + key);
+            flattenRecursive(val, new_prefix, separator, result);
+        }
+    } else if (value.isList()) {
+        const auto& list = value.asList();
+        for (size_t i = 0; i < list.size(); ++i) {
+            std::string new_prefix = prefix + std::string(separator) + std::to_string(i);
+            flattenRecursive(list[i], new_prefix, separator, result);
+        }
+    } else {
+        std::string val_str;
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::monostate>) val_str = "null";
+            else if constexpr (std::is_same_v<T, bool>) val_str = arg ? "true" : "false";
+            else if constexpr (std::is_same_v<T, std::string>) val_str = arg;
+            else if constexpr (std::is_arithmetic_v<T>) val_str = std::to_string(arg);
+            else if constexpr (std::is_same_v<T, LogBinary>) val_str = LogUtils::base64Encode(arg);
+        }, value);
+        if (!prefix.empty()) result[prefix] = val_str;
+    }
+}
+
+std::map<std::string, std::string> LogEntry::flattenedAttributes(std::string_view separator) const {
+    std::map<std::string, std::string> result;
+    for (const auto& [key, value] : attributes) {
+        flattenRecursive(value, key, separator, result);
+    }
+    return result;
 }
 
 std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_str)
@@ -1368,6 +1530,13 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
                 return std::unexpected("Failed to parse span_id: " + val_res.error());
             entry.span_id = *val_res;
         }
+        else if (key == "stacktrace")
+        {
+            auto val_res = parseJsonString(it, end);
+            if (!val_res)
+                return std::unexpected("Failed to parse stacktrace: " + val_res.error());
+            entry.stacktrace = *val_res;
+        }
         else if (key == "tags")
         {
             auto val_res = parseJsonStringArray(it, end);
@@ -1490,7 +1659,7 @@ struct JsonVisitor
     void operator()(double d) const { os << d; }
     void operator()(const std::string &s) const { os << "\"" << escapeJson(s) << "\""; }
     void operator()(const LogBinary &b) const {
-        os << "{\"$binary\": \"" << base64_encode(b) << "\"}";
+        os << "{\"$binary\": \"" << LogUtils::base64Encode(b) << "\"}";
     }
 
     void operator()(const std::shared_ptr<LogList> &list) const
@@ -1643,6 +1812,9 @@ std::string LogEntry::toJson(const JsonOptions &options) const
             writeField("span_id", escapeJson(span_id));
     }
 
+    if (!stacktrace.empty())
+        writeField("stacktrace", escapeJson(stacktrace));
+
     if (!tags.empty() || !options.exclude_empty)
     {
         if (!tags.empty())
@@ -1710,6 +1882,24 @@ std::string LogEntry::toJson(const JsonOptions &options) const
 
     oss << nl << "}";
     return oss.str();
+}
+
+std::string LogEntry::toKvp() const {
+    std::ostringstream oss;
+    oss << "timestamp=\"" << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp) << "\" ";
+    oss << "level=\"" << levelToString(level) << "\" ";
+    oss << "message=\"" << escapeJson(message) << "\" ";
+    if (process_id != 0) oss << "process_id=" << process_id << " ";
+    if (!host_name.empty()) oss << "host_name=\"" << escapeJson(host_name) << "\" ";
+    
+    auto flat = flattenedAttributes();
+    for (const auto& [key, value] : flat) {
+        oss << key << "=\"" << escapeJson(value) << "\" ";
+    }
+    
+    std::string res = oss.str();
+    if (!res.empty() && res.back() == ' ') res.pop_back();
+    return res;
 }
 
 std::strong_ordering LogEntry::operator<=>(const LogEntry &other) const

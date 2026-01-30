@@ -26,7 +26,7 @@ endif()
 
 # --- Main Executable ---
 add_executable(gemini-cli src/main.cpp)
-target_link_libraries(gemini-cli PRIVATE gemini-core)
+target_link_libraries(gemini-cli PRIVATE gemini-core stdc++exp)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(gemini-cli PRIVATE -Wall -Wextra -Wpedantic)
@@ -41,6 +41,7 @@ add_executable(LogAnalyzerTest test/LogAnalyzerTest.cpp)
 target_link_libraries(LogAnalyzerTest PRIVATE
     GTest::gtest_main
     gemini-core
+    stdc++exp
 )
 add_test(NAME LogAnalyzerTest COMMAND LogAnalyzerTest)
 
@@ -49,5 +50,6 @@ add_executable(LogEntryTest test/LogEntryTest.cpp)
 target_link_libraries(LogEntryTest PRIVATE
     GTest::gtest_main
     gemini-core
+    stdc++exp
 )
 add_test(NAME LogEntryTest COMMAND LogEntryTest)

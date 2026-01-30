@@ -18,6 +18,12 @@
 #include <functional>
 #include <initializer_list>
 #include <expected>
+#include <shared_mutex>
+
+#if __has_include(<stacktrace>)
+#include <stacktrace>
+#define HAS_STACKTRACE 1
+#endif
 
 enum class LogLevel {
     DEBUG = 0,
@@ -57,6 +63,11 @@ using LogValueBase = std::variant<
     std::shared_ptr<LogObject>
 >;
 
+namespace LogUtils {
+    std::string base64Encode(const std::vector<std::byte>& data);
+    std::vector<std::byte> base64Decode(std::string_view encoded);
+}
+
 struct LogValue : LogValueBase {
     using LogValueBase::LogValueBase;
     
@@ -92,6 +103,9 @@ struct LogValue : LogValueBase {
     std::optional<LogValue> find(std::string_view path) const;
     LogValue& operator[](std::string_view key);
     LogValue& operator[](size_t index);
+
+    // Deep cloning (Iteration 1)
+    LogValue deepClone() const;
 };
 
 struct LogEntry {
@@ -129,6 +143,7 @@ struct LogEntry {
     std::string source_function;
     int source_line = 0;
     std::string thread_id;
+    std::string stacktrace; // New (Iteration 1)
 
     // Tracing context
     std::string trace_id;
@@ -147,6 +162,10 @@ struct LogEntry {
     static std::string_view levelToString(LogLevel level);
     static uint64_t currentProcessId(); 
     static std::string currentHostName(); 
+
+    // Global resources management (Iteration 1)
+    static void setGlobalResource(std::string key, LogValue value);
+    static void clearGlobalResources();
 
     // Factory methods
     static LogEntry create(LogLevel level, std::string_view message, 
@@ -167,6 +186,9 @@ struct LogEntry {
     LogEntry& withResources(const std::map<std::string, LogValue>& res); // New
     LogEntry& withEnvironment(); // New
     LogEntry& withSystemInfo(); // New
+    LogEntry& withMemoryInfo(); // New (Iteration 1)
+    LogEntry& withNetworkInfo(); // New (Iteration 1)
+    LogEntry& withStacktrace(size_t skip = 1, size_t max_depth = 20); // New (Iteration 1)
     LogEntry& withProcessId(uint64_t pid); 
     LogEntry& withHost(std::string_view host); 
     LogEntry& withApp(std::string_view app);   
@@ -235,12 +257,14 @@ struct LogEntry {
     int getSeverityValue() const; // Iteration 1
 
     std::map<std::string, LogValue> toMap() const; // Iteration 1
+    std::map<std::string, std::string> flattenedAttributes(std::string_view separator = ".") const; // New (Iteration 1)
 
     // Comparison (C++20)
     std::strong_ordering operator<=>(const LogEntry& other) const;
     bool operator==(const LogEntry& other) const;
 
     std::string toJson(const JsonOptions& options = defaultJsonOptions) const;
+    std::string toKvp() const; // New (Iteration 1)
 
     // Stream Support
     friend std::ostream& operator<<(std::ostream& os, const LogEntry& entry);
