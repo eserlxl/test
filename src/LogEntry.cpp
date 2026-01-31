@@ -5,6 +5,7 @@
 #include <sstream>
 #include <ctime>
 #include <typeinfo>
+#include <limits> // Moved here
 
 #if defined(_WIN32) || defined(_WIN64)
 #define WIN32_LEAN_AND_MEAN
@@ -12,6 +13,9 @@
 #include <process.h>
 #else
 #include <unistd.h>
+#include <sys/resource.h> // For getrusage on Unix
+#include <sys/sysinfo.h> // For get_load_statistics on Linux
+#include <fstream> // For reading /proc files
 #endif
 
 const LogEntry::JsonOptions LogEntry::defaultJsonOptions; // Initializes with all defaults
@@ -262,6 +266,50 @@ LogEntry &LogEntry::withTraceContext(std::string_view tid, std::string_view sid)
     return *this;
 }
 
+LogEntry &LogEntry::withSystemLoad()
+{
+#if defined(__linux__)
+    double load_avg[3];
+    if (getloadavg(load_avg, 3) != -1)
+    {
+        withAttribute("system_load_1m", load_avg[0]);
+        withAttribute("system_load_5m", load_avg[1]);
+        withAttribute("system_load_15m", load_avg[2]);
+    }
+#elif !defined(_WIN32) && !defined(_WIN64)
+    // Other Unix-like systems might have different ways or no easy way
+    // Placeholder for non-Linux Unix
+    withAttribute("system_load", "unsupported");
+#else
+    // Dummy on Windows as per design
+    withAttribute("system_load", "unsupported");
+#endif
+    return *this;
+}
+
+LogEntry &LogEntry::withMemoryUsage()
+{
+#if defined(_WIN32) || defined(_WIN64)
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof(pmc)))
+    {
+        withAttribute("memory_rss_bytes", static_cast<uint64_t>(pmc.WorkingSetSize));
+        withAttribute("memory_peak_rss_bytes", static_cast<uint64_t>(pmc.PeakWorkingSetSize));
+    }
+#else
+    // Using /proc/self/statm on Linux
+    std::ifstream statm("/proc/self/statm");
+    if (statm.is_open())
+    {
+        long long size, resident, share, text, lib, data, dt;
+        statm >> size >> resident >> share >> text >> lib >> data >> dt;
+        long page_size = sysconf(_SC_PAGESIZE);
+        withAttribute("memory_rss_bytes", static_cast<uint64_t>(resident * page_size));
+    }
+#endif
+    return *this;
+}
+
 LogEntry &LogEntry::removeAttribute(const std::string &key)
 {
     attributes.erase(key);
@@ -345,28 +393,42 @@ bool LogEntry::parseTime()
     return true;
 }
 
-std::string LogEntry::generatedTimestampString(bool include_fractional) const
+std::string LogEntry::generatedTimestampString(bool include_fractional, 
+                                             JsonOptions::Timezone tz,
+                                             const std::optional<std::string>& custom_fmt) const
 {
     if (time_point.time_since_epoch().count() == 0)
         return "";
 
     std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
     std::tm tm = {};
+    
+    if (tz == JsonOptions::Timezone::UTC) {
 #if defined(_WIN32) || defined(_WIN64)
-    localtime_s(&tm, &tt);
+        gmtime_s(&tm, &tt);
 #else
-    localtime_r(&tt, &tm);
+        gmtime_r(&tt, &tm);
 #endif
+    } else {
+#if defined(_WIN32) || defined(_WIN64)
+        localtime_s(&tm, &tt);
+#else
+        localtime_r(&tt, &tm);
+#endif
+    }
 
     std::ostringstream ss;
-    ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-
-    if (include_fractional)
-    {
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      time_point.time_since_epoch()) %
-                  1000;
-        ss << "." << std::setfill('0') << std::setw(3) << ms.count();
+    if (custom_fmt.has_value()) {
+        ss << std::put_time(&tm, custom_fmt->c_str());
+    } else {
+        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        if (include_fractional)
+        {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          time_point.time_since_epoch()) %
+                      1000;
+            ss << "." << std::setfill('0') << std::setw(3) << ms.count();
+        }
     }
 
     return ss.str();
@@ -424,6 +486,54 @@ std::optional<LogValue> LogEntry::getAttribute(const std::string &key) const
 bool LogEntry::hasTag(std::string_view tag) const
 {
     return tags.contains(tag);
+}
+
+std::optional<double> LogEntry::getAsDouble(const std::string& key) const {
+    auto it = attributes.find(key);
+    if (it == attributes.end()) return std::nullopt;
+
+    return std::visit([](auto&& arg) -> std::optional<double> {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, int64_t>) {
+            return static_cast<double>(arg);
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            return static_cast<double>(arg);
+        } else if constexpr (std::is_same_v<T, double>) {
+            return arg;
+        } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) { // Convert nanoseconds to double seconds
+            return std::chrono::duration_cast<std::chrono::duration<double>>(arg).count();
+        }
+        return std::nullopt;
+    }, it->second);
+}
+
+std::optional<int64_t> LogEntry::getAsInt(const std::string& key) const {
+    auto it = attributes.find(key);
+    if (it == attributes.end()) return std::nullopt;
+
+    // Need to include <limits> for numeric_limits
+    #include <limits>
+
+    return std::visit([](auto&& arg) -> std::optional<int64_t> {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, int64_t>) {
+            return arg;
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            if (arg > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                return std::nullopt;
+            }
+            return static_cast<int64_t>(arg);
+        } else if constexpr (std::is_same_v<T, double>) {
+            if (arg > static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+                arg < static_cast<double>(std::numeric_limits<int64_t>::min())) {
+                return std::nullopt;
+            }
+            return static_cast<int64_t>(arg);
+        } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) { // Convert nanoseconds to int64_t
+            return arg.count();
+        }
+        return std::nullopt;
+    }, it->second);
 }
 
 // Helper to skip whitespace
@@ -1226,6 +1336,43 @@ static std::string escapeJson(const std::string &s)
     return o.str();
 }
 
+// Base64 helper
+static std::string base64Encode(const std::vector<uint8_t>& data) {
+    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string ret;
+    int i = 0;
+    int j = 0;
+    uint8_t char_array_3[3];
+    uint8_t char_array_4[4];
+
+    for (auto b : data) {
+        char_array_3[i++] = b;
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for (i = 0; (i < 4); i++) ret += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (j = i; j < 3; j++) char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; (j < i + 1); j++) ret += base64_chars[char_array_4[j]];
+        while ((i++ < 3)) ret += '=';
+    }
+
+    return ret;
+}
+
 struct JsonVisitor
 {
     std::ostream &os;
@@ -1253,6 +1400,25 @@ struct JsonVisitor
     void operator()(uint64_t u) const { os << u; }
     void operator()(double d) const { os << d; }
     void operator()(const std::string &s) const { os << "\"" << escapeJson(s) << "\""; }
+
+    void operator()(const std::vector<uint8_t>& binary) const {
+        if (options.binary_encoding == LogEntry::JsonOptions::BinaryEncoding::Hex) {
+            os << "\"0x";
+            auto flags = os.flags();
+            os << std::hex << std::setfill('0');
+            for (auto b : binary) {
+                os << std::setw(2) << static_cast<int>(b);
+            }
+            os.flags(flags);
+            os << "\"";
+        } else {
+            os << "\"" << base64Encode(binary) << "\"";
+        }
+    }
+
+    void operator()(std::chrono::nanoseconds duration) const {
+        os << duration.count();
+    }
 
     void operator()(const std::shared_ptr<LogList> &list) const
     {
@@ -1311,20 +1477,23 @@ std::string LogEntry::toJson(const JsonOptions &options) const
 {
     std::ostringstream oss;
     std::string nl = options.pretty ? "\n" : "";
-    std::string indent = options.pretty ? "  " : "";
+    std::string indent_str = options.pretty ? "  " : "";
 
     oss << "{" << nl;
 
     // Timestamp
+    oss << indent_str << "\"timestamp\": ";
     if (options.timestamp_format == TimestampFormat::UnixMillis)
     {
-        oss << indent << "\"timestamp\": " << std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count();
+        oss << std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count();
     }
     else
     {
-        oss << indent << "\"timestamp\": \"";
-        if (options.timestamp_format == TimestampFormat::ISO8601)
-        {
+        oss << "\"";
+        if (options.custom_timestamp_format.has_value()) {
+            oss << generatedTimestampString(true, options.timezone, options.custom_timestamp_format);
+        } else if (options.timestamp_format == TimestampFormat::ISO8601) {
+            // ISO8601 format, explicitly UTC, with desired precision
             std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
             std::tm tm = {};
 #if defined(_WIN32) || defined(_WIN64)
@@ -1332,7 +1501,6 @@ std::string LogEntry::toJson(const JsonOptions &options) const
 #else
             gmtime_r(&tt, &tm);
 #endif
-
             oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
 
             if (options.precision != JsonOptions::Precision::Seconds)
@@ -1341,32 +1509,30 @@ std::string LogEntry::toJson(const JsonOptions &options) const
                 oss << ".";
                 if (options.precision == JsonOptions::Precision::Millis)
                 {
-                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(epoch) % 1000;
-                    oss << std::setfill('0') << std::setw(3) << ms.count();
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count() % 1000; // Use count() directly
+                    oss << std::setfill('0') << std::setw(3) << ms;
                 }
                 else if (options.precision == JsonOptions::Precision::Micros)
                 {
-                    auto us = std::chrono::duration_cast<std::chrono::microseconds>(epoch) % 1000000;
-                    oss << std::setfill('0') << std::setw(6) << us.count();
+                    auto us = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count() % 1000000; // Use count() directly
+                    oss << std::setfill('0') << std::setw(6) << us;
                 }
                 else if (options.precision == JsonOptions::Precision::Nanos)
                 {
-                    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch) % 1000000000;
-                    oss << std::setfill('0') << std::setw(9) << ns.count();
+                    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch).count() % 1000000000; // Use count() directly
+                    oss << std::setfill('0') << std::setw(9) << ns;
                 }
             }
-            oss << "Z";
-        }
-        else
-        {
-            oss << escapeJson(timestamp.empty() ? generatedTimestampString() : timestamp);
+            oss << "Z"; // Indicate UTC
+        } else { // TimestampFormat::Default
+            oss << generatedTimestampString(true, options.timezone);
         }
         oss << "\"";
     }
 
     auto writeField = [&](const std::string &key, const auto &value, bool isString = true)
     {
-        oss << "," << nl << indent << "\"" << key << "\": ";
+        oss << "," << nl << indent_str << "\"" << key << "\": ";
         if (isString)
             oss << "\"";
         oss << value;
@@ -1386,11 +1552,11 @@ std::string LogEntry::toJson(const JsonOptions &options) const
 
     if (options.include_source && (!source_file.empty() || !source_function.empty() || source_line != 0))
     {
-        oss << "," << nl << indent << "\"source\": {" << nl;
-        oss << indent << indent << "\"file\": \"" << escapeJson(source_file) << "\"," << nl;
-        oss << indent << indent << "\"function\": \"" << escapeJson(source_function) << "\"," << nl;
-        oss << indent << indent << "\"line\": " << source_line << nl;
-        oss << indent << "}";
+        oss << "," << nl << indent_str << "\"source\": {" << nl;
+        oss << indent_str << indent_str << "\"file\": \"" << escapeJson(source_file) << "\"," << nl;
+        oss << indent_str << indent_str << "\"function\": \"" << escapeJson(source_function) << "\"," << nl;
+        oss << indent_str << indent_str << "\"line\": " << source_line << nl;
+        oss << indent_str << "}";
     }
 
     if (options.include_thread && !thread_id.empty())
@@ -1408,7 +1574,7 @@ std::string LogEntry::toJson(const JsonOptions &options) const
     {
         if (!tags.empty())
         {
-            oss << "," << nl << indent << "\"tags\": [";
+            oss << "," << nl << indent_str << "\"tags\": [";
             bool first = true;
             for (const auto &tag : tags)
             {
@@ -1421,7 +1587,7 @@ std::string LogEntry::toJson(const JsonOptions &options) const
         }
         else if (!options.exclude_empty)
         {
-            oss << "," << nl << indent << "\"tags\": []";
+            oss << "," << nl << indent_str << "\"tags\": []";
         }
     }
 
@@ -1429,21 +1595,21 @@ std::string LogEntry::toJson(const JsonOptions &options) const
     {
         if (!attributes.empty())
         {
-            oss << "," << nl << indent << "\"attributes\": {" << nl;
+            oss << "," << nl << indent_str << "\"attributes\": {" << nl;
             bool first = true;
             for (const auto &[key, value] : attributes)
             {
                 if (!first)
                     oss << "," << nl;
-                oss << indent << indent << "\"" << escapeJson(key) << "\": ";
+                oss << indent_str << indent_str << "\"" << escapeJson(key) << "\": ";
                 std::visit(JsonVisitor{oss, options, 1}, value);
                 first = false;
             }
-            oss << nl << indent << "}";
+            oss << nl << indent_str << "}";
         }
         else if (!options.exclude_empty)
         {
-            oss << "," << nl << indent << "\"attributes\": {}";
+            oss << "," << nl << indent_str << "\"attributes\": {}";
         }
     }
 

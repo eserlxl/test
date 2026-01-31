@@ -3,6 +3,7 @@
 #include <iostream>
 #include <format>
 #include <sstream>
+#include <cstring>
 
 void testLevelParsing()
 {
@@ -574,10 +575,12 @@ void testWithMetadata()
 
 void testJsonOptionsIteration1()
 {
+    std::cout << "Starting testJsonOptionsIteration1..." << std::endl;
     LogEntry entry = LogEntry::create(LogLevel::INFO, "Options test");
     entry.withAttribute("a", 1LL);
     entry.withTag("t1");
 
+    // Existing tests for exclude_empty and precision
     LogEntry::JsonOptions opts;
     opts.exclude_empty = true;
 
@@ -593,36 +596,253 @@ void testJsonOptionsIteration1()
     assert(json.find("\"attributes\"") == std::string::npos);
     assert(json.find("\"tags\"") == std::string::npos);
 
-    // Test Precision
-    entry.time_point = std::chrono::system_clock::now();
+    // Test Precision for ISO8601
+    entry.time_point = std::chrono::system_clock::now(); // Use current time for more robust testing
     opts.timestamp_format = LogEntry::TimestampFormat::ISO8601;
 
-    opts.precision = LogEntry::JsonOptions::Precision::Seconds;
-    json = entry.toJson(opts);
-    // Extract timestamp value: "timestamp": "VALUE"
-    auto ts_pos = json.find("\"timestamp\": \"");
-    assert(ts_pos != std::string::npos);
-    auto start = ts_pos + 14;
-    auto end = json.find("\"", start);
-    std::string ts_val = json.substr(start, end - start);
+        opts.precision = LogEntry::JsonOptions::Precision::Seconds;
 
-    // 2023-10-27T10:00:00Z - should not have '.'
-    assert(ts_val.find(".") == std::string::npos);
+        json = entry.toJson(opts);
 
-    opts.precision = LogEntry::JsonOptions::Precision::Millis;
-    json = entry.toJson(opts);
-    ts_pos = json.find("\"timestamp\": \"");
-    start = ts_pos + 14;
-    end = json.find("\"", start);
-    ts_val = json.substr(start, end - start);
+        std::cout << "DEBUG: JSON for Precision::Seconds: " << json << std::endl; // Added debug print
 
-    // .123Z - should have '.'
-    assert(ts_val.find(".") != std::string::npos);
+    
 
-    opts.precision = LogEntry::JsonOptions::Precision::Nanos;
-    json = entry.toJson(opts);
-    // .123456789Z
-    std::cout << "Nanos JSON: " << json << std::endl;
+        // Extract the timestamp value from the JSON
+
+        size_t ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        size_t ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        size_t ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        std::string timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+    
+
+        std::cout << "DEBUG: Extracted timestamp_str: " << timestamp_str << std::endl;
+
+        std::cout << "DEBUG: timestamp_str.find(\".\") result: " << timestamp_str.find(".") << std::endl;
+
+    
+
+        assert(timestamp_str.find("T") != std::string::npos && 
+
+               timestamp_str.find("Z") != std::string::npos && 
+
+               timestamp_str.find(".") == std::string::npos);
+
+    
+
+        opts.precision = LogEntry::JsonOptions::Precision::Millis;
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for millis precision
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+        
+
+        assert(timestamp_str.find("T") != std::string::npos && timestamp_str.find("Z") != std::string::npos);
+
+        // Check for 3 digits after the dot (before Z)
+
+        auto dot_pos_millis = timestamp_str.find('.');
+
+        auto Z_pos_millis = timestamp_str.find('Z');
+
+        assert(Z_pos_millis > dot_pos_millis);
+
+        assert((Z_pos_millis - dot_pos_millis - 1) == 3);
+
+    
+
+        opts.precision = LogEntry::JsonOptions::Precision::Micros;
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for micros precision
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+    
+
+        assert(timestamp_str.find("T") != std::string::npos && timestamp_str.find("Z") != std::string::npos);
+
+        // Check for 6 digits after the dot (before Z)
+
+        auto dot_pos_micros = timestamp_str.find('.');
+
+        auto Z_pos_micros = timestamp_str.find('Z');
+
+        assert(Z_pos_micros > dot_pos_micros);
+
+        assert((Z_pos_micros - dot_pos_micros - 1) == 6);
+
+        
+
+        opts.precision = LogEntry::JsonOptions::Precision::Nanos;
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for nanos precision
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+    
+
+        assert(timestamp_str.find("T") != std::string::npos && timestamp_str.find("Z") != std::string::npos);
+
+        // Check for 9 digits after the dot (before Z)
+
+        auto dot_pos_nanos = timestamp_str.find('.');
+
+        auto Z_pos_nanos = timestamp_str.find('Z');
+
+        assert(Z_pos_nanos > dot_pos_nanos);
+
+        assert((Z_pos_nanos - dot_pos_nanos - 1) == 9);
+
+    
+
+    
+
+        // Test Timezone
+
+        entry.time_point = std::chrono::system_clock::now(); // Use current time for more robust testing
+
+        opts.timestamp_format = LogEntry::TimestampFormat::Default; // Use default string format
+
+        opts.precision = LogEntry::JsonOptions::Precision::Millis; // Default precision for default format string
+
+    
+
+        opts.timezone = LogEntry::JsonOptions::Timezone::UTC;
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for UTC default format
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+    
+
+        // Check for standard format with millis, and that it's not local
+
+        // (This is a weak check, as system could be UTC)
+
+        // For now, simply verify the format structure.
+
+        assert(timestamp_str.find(":") != std::string::npos && timestamp_str.find(".") != std::string::npos);
+
+        // std::cout << "UTC NOW: " << json << std::endl;
+
+    
+
+        opts.timezone = LogEntry::JsonOptions::Timezone::Local;
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for Local default format
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+    
+
+        // Check for standard format with millis, and that it's not UTC (weak check)
+
+        assert(timestamp_str.find(":") != std::string::npos && timestamp_str.find(".") != std::string::npos);
+
+        // std::cout << "LOCAL NOW: " << json << std::endl;
+
+    
+
+        // Test custom_timestamp_format
+
+        opts.timezone = LogEntry::JsonOptions::Timezone::UTC; // Set to UTC for deterministic format for custom
+
+        opts.custom_timestamp_format = "%Y/%m/%d %H:%M:%S - Custom";
+
+        json = entry.toJson(opts);
+
+        // Extract timestamp string for custom format
+
+        ts_key_pos = json.find("\"timestamp\": \"");
+
+        assert(ts_key_pos != std::string::npos);
+
+        ts_start = ts_key_pos + strlen("\"timestamp\": \"");
+
+        ts_end = json.find("\"", ts_start);
+
+        assert(ts_end != std::string::npos);
+
+        timestamp_str = json.substr(ts_start, ts_end - ts_start);
+
+        
+
+        // The specific time will change, but the format should be consistent
+
+        assert(timestamp_str.find("- Custom") != std::string::npos);
+
+        assert(timestamp_str.find("/") != std::string::npos); // Check for / as per custom format
+
+        opts.custom_timestamp_format = std::nullopt; // Reset for next test
 
     std::cout << "testJsonOptionsIteration1 passed" << std::endl;
 }
@@ -647,6 +867,118 @@ void testNumericConversion()
 
     std::cout << "testNumericConversion passed" << std::endl;
 }
+
+void testNewLogValueTypes()
+{
+    std::cout << "Starting testNewLogValueTypes..." << std::endl;
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "New types test");
+
+    // Test std::vector<uint8_t>
+    std::vector<uint8_t> binary_data = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x23, 0x45, 0x67};
+    entry.withAttribute("binary_payload", binary_data);
+
+    // Test std::chrono::nanoseconds
+    std::chrono::nanoseconds duration = std::chrono::nanoseconds(1234567890123); // 1.234567890123 seconds
+    entry.withAttribute("duration_ns", duration);
+
+    // Verify retrieval
+    auto retrieved_binary = entry.getAttributeAs<std::vector<uint8_t>>("binary_payload");
+    assert(retrieved_binary.has_value());
+    assert(*retrieved_binary == binary_data);
+
+    auto retrieved_duration = entry.getAttributeAs<std::chrono::nanoseconds>("duration_ns");
+    assert(retrieved_duration.has_value());
+    assert(*retrieved_duration == duration);
+
+    // Test JSON serialization (default Hex)
+    std::string json_default = entry.toJson();
+    assert(json_default.find("\"binary_payload\": \"0xdeadbeef01234567\"") != std::string::npos);
+    assert(json_default.find("\"duration_ns\": 1234567890123") != std::string::npos);
+
+    // Test JSON serialization (Base64)
+    LogEntry::JsonOptions base64_opts;
+    base64_opts.binary_encoding = LogEntry::JsonOptions::BinaryEncoding::Base64;
+    std::string json_base64 = entry.toJson(base64_opts);
+    std::cout << "DEBUG: JSON Base64: " << json_base64 << std::endl;
+    assert(json_base64.find("\"binary_payload\": \"3q2+7wEjRWc=\"") != std::string::npos); // Base64 for DEAD BEEF 01 23 45 67
+    assert(json_base64.find("\"duration_ns\": 1234567890123") != std::string::npos);
+
+
+    std::cout << "testNewLogValueTypes passed" << std::endl;
+}
+
+void testErgonomicGetters()
+{
+    std::cout << "Starting testErgonomicGetters..." << std::endl;
+    LogEntry entry;
+
+    entry.withAttribute("i64_val", int64_t{100});
+    entry.withAttribute("u64_val", uint64_t{200});
+    entry.withAttribute("double_val", 300.5);
+    entry.withAttribute("duration_val", std::chrono::nanoseconds(5000000000LL)); // 5 seconds
+    entry.withAttribute("bool_val", true);
+    entry.withAttribute("string_val", "hello");
+
+    // Test getAsDouble
+    assert(entry.getAsDouble("i64_val").value_or(0.0) == 100.0);
+    assert(entry.getAsDouble("u64_val").value_or(0.0) == 200.0);
+    assert(entry.getAsDouble("double_val").value_or(0.0) == 300.5);
+    assert(entry.getAsDouble("duration_val").value_or(0.0) == 5.0); // 5 billion ns = 5s
+    assert(!entry.getAsDouble("bool_val").has_value());
+    assert(!entry.getAsDouble("string_val").has_value());
+    assert(!entry.getAsDouble("non_existent").has_value());
+
+    // Test getAsInt
+    assert(entry.getAsInt("i64_val").value_or(0LL) == 100LL);
+    assert(entry.getAsInt("u64_val").value_or(0LL) == 200LL);
+    assert(entry.getAsInt("double_val").value_or(0LL) == 300LL); // Precision loss
+    assert(entry.getAsInt("duration_val").value_or(0LL) == 5000000000LL); // ns count
+    assert(!entry.getAsInt("bool_val").has_value());
+    assert(!entry.getAsInt("string_val").has_value());
+    assert(!entry.getAsInt("non_existent").has_value());
+
+    // Test getAsInt edge cases for uint64_t and double
+    entry.withAttribute("large_u64", std::numeric_limits<uint64_t>::max());
+    assert(!entry.getAsInt("large_u64").has_value()); // Too large for int64_t
+
+    entry.withAttribute("large_double", static_cast<double>(std::numeric_limits<int64_t>::max()) + 1.0e10); // Make it clearly larger
+    assert(!entry.getAsInt("large_double").has_value()); // Too large for int64_t
+
+    entry.withAttribute("small_double", static_cast<double>(std::numeric_limits<int64_t>::min()) - 1.0e10); // Make it clearly smaller
+    assert(!entry.getAsInt("small_double").has_value()); // Too small for int64_t
+
+    std::cout << "testErgonomicGetters passed" << std::endl;
+}
+
+void testMetadataExtensions()
+{
+    std::cout << "Starting testMetadataExtensions..." << std::endl;
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "System/Memory test");
+    entry.withSystemLoad();
+    entry.withMemoryUsage();
+
+    // Check for presence, exact values are system-dependent
+#if defined(__linux__)
+    assert(entry.hasAttribute("system_load_1m"));
+    assert(entry.hasAttribute("system_load_5m"));
+    assert(entry.hasAttribute("system_load_15m"));
+    assert(entry.hasAttribute("memory_rss_bytes"));
+#elif defined(_WIN32) || defined(_WIN64)
+    assert(entry.hasAttribute("system_load")); // Should be "unsupported"
+    assert(entry.getAttributeAs<std::string>("system_load").value_or("") == "unsupported");
+    assert(entry.hasAttribute("memory_rss_bytes"));
+    assert(entry.hasAttribute("memory_peak_rss_bytes"));
+#else
+    assert(entry.hasAttribute("system_load")); // Should be "unsupported"
+    assert(entry.getAttributeAs<std::string>("system_load").value_or("") == "unsupported");
+#endif
+
+    std::string json = entry.toJson();
+    std::cout << "Metadata Extensions JSON: " << json << std::endl; // For visual inspection
+
+    std::cout << "testMetadataExtensions passed" << std::endl;
+}
+
 
 void testIteration1Features()
 {
@@ -727,6 +1059,11 @@ int main()
     testWithMetadata();
     testJsonOptionsIteration1();
     testNumericConversion();
+
+    // New tests for Iteration 1
+    testNewLogValueTypes();
+    testErgonomicGetters();
+    testMetadataExtensions();
 
     std::cout << "All LogEntry tests passed!" << std::endl;
 

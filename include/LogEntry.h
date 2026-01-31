@@ -19,6 +19,8 @@
 #include <initializer_list>
 #include <expected>
 
+#include <vector> // Required for std::vector<uint8_t>
+
 enum class LogLevel {
     DEBUG = 0,
     INFO = 1,
@@ -49,6 +51,8 @@ using LogValueBase = std::variant<
     uint64_t,
     double,
     std::string,
+    std::vector<uint8_t>,           // New: Binary data
+    std::chrono::nanoseconds,        // New: High-precision duration
     std::shared_ptr<LogList>,
     std::shared_ptr<LogObject>
 >;
@@ -72,6 +76,8 @@ struct LogEntry {
 
     struct JsonOptions {
         enum class Precision { Seconds, Millis, Micros, Nanos };
+        enum class Timezone { Local, UTC }; // New
+        enum class BinaryEncoding { Hex, Base64 }; // New
 
         bool pretty = false;
         bool include_source = true;
@@ -80,6 +86,9 @@ struct LogEntry {
         bool exclude_empty = false; // New: skip empty attributes/tags
         TimestampFormat timestamp_format = TimestampFormat::Default;
         Precision precision = Precision::Millis; // New: configurable precision
+        Timezone timezone = Timezone::UTC; // New: Default to UTC for machine-readable logs
+        BinaryEncoding binary_encoding = BinaryEncoding::Hex; // New: Default to Hex encoding
+        std::optional<std::string> custom_timestamp_format = std::nullopt; // New: optional strftime string
     };
 
     static const JsonOptions defaultJsonOptions; // New: Default options for JSON serialization
@@ -146,6 +155,8 @@ struct LogEntry {
     LogEntry& withTags(std::initializer_list<std::string_view> tags);
     LogEntry& withException(const std::exception& e);
     LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
+    LogEntry& withSystemLoad();  // New: Captures system load averages
+    LogEntry& withMemoryUsage(); // New: Captures current process RSS
 
     // Attribute manipulation
     LogEntry& removeAttribute(const std::string& key); // Iteration 1
@@ -156,7 +167,9 @@ struct LogEntry {
 
     // Methods
     bool parseTime();
-    std::string generatedTimestampString(bool include_fractional = true) const;
+    std::string generatedTimestampString(bool include_fractional = true, 
+                                         JsonOptions::Timezone tz = JsonOptions::Timezone::Local,
+                                         const std::optional<std::string>& custom_fmt = std::nullopt) const;
     void setAttribute(const std::string& key, const std::string& value); // Compat shim
     void setAttribute(const std::string& key, const char* value); // Ambiguity resolver
     void setAttribute(const std::string& key, LogValue value); // New overload
@@ -195,6 +208,12 @@ struct LogEntry {
         auto opt_val = getAttributeAs<T>(key);
         return opt_val.has_value() && *opt_val == value;
     }
+
+    // Returns value as double if it is int, uint, or double.
+    std::optional<double> getAsDouble(const std::string& key) const;
+
+    // Returns value as int64 if it is any numeric type (potential precision loss).
+    std::optional<int64_t> getAsInt(const std::string& key) const;
 
     bool hasTag(std::string_view tag) const;
     bool isValid() const noexcept; // Iteration 1
