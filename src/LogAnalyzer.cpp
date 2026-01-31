@@ -10,9 +10,11 @@
 #include <shared_mutex>
 #include <condition_variable>
 
+namespace LogAnalysis {
+
 // --- ParsingConfig Implementation ---
 
-bool ParsingConfig::validate() const
+bool LogAnalysis::ParsingConfig::validate() const
 {
     if (line_pattern.empty())
         return false;
@@ -27,7 +29,7 @@ bool ParsingConfig::validate() const
     return true;
 }
 
-ParsingConfig ParsingConfig::fromRegex(std::string pattern)
+LogAnalysis::ParsingConfig LogAnalysis::ParsingConfig::fromRegex(std::string pattern)
 {
     ParsingConfig config;
     config.line_pattern = pattern;
@@ -37,7 +39,7 @@ ParsingConfig ParsingConfig::fromRegex(std::string pattern)
 }
 
 // Improved static helper to parse named groups
-ParsingConfig ParsingConfig::fromRegexWithNamedGroups(std::string pattern)
+LogAnalysis::ParsingConfig LogAnalysis::ParsingConfig::fromRegexWithNamedGroups(std::string pattern)
 {
     ParsingConfig config;
     config.line_pattern = pattern;
@@ -58,24 +60,24 @@ ParsingConfig ParsingConfig::fromRegexWithNamedGroups(std::string pattern)
 
 namespace Filters
 {
-    class LevelPredicate : public LogPredicate
+    class LevelPredicate : public LogAnalysis::LogPredicate
     {
-        LogLevel level_;
+        ::LogLevel level_;
 
     public:
-        explicit LevelPredicate(LogLevel l) : level_(l) {}
-        bool test(const LogEntry &entry) const override { return entry.level == level_; }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<LevelPredicate>(level_); }
+        explicit LevelPredicate(::LogLevel l) : level_(l) {}
+        bool test(const ::LogEntry &entry) const override { return entry.level == level_; }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<LevelPredicate>(level_); }
     };
 
-    class KeywordPredicate : public LogPredicate
+    class KeywordPredicate : public LogAnalysis::LogPredicate
     {
         std::string keyword_;
         bool case_sensitive_;
 
     public:
         KeywordPredicate(std::string k, bool cs) : keyword_(std::move(k)), case_sensitive_(cs) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             if (case_sensitive_)
             {
@@ -94,48 +96,48 @@ namespace Filters
                 return it != entry.message.end();
             }
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<KeywordPredicate>(keyword_, case_sensitive_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<KeywordPredicate>(keyword_, case_sensitive_); }
     };
 
-    class RegexPredicate : public LogPredicate
+    class RegexPredicate : public LogAnalysis::LogPredicate
     {
         std::regex regex_;
         std::string pattern_;
 
     public:
         explicit RegexPredicate(std::string p) : regex_(p), pattern_(std::move(p)) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             return std::regex_search(entry.message, regex_);
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<RegexPredicate>(pattern_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<RegexPredicate>(pattern_); }
     };
 
-    class AttributePredicate : public LogPredicate
+    class AttributePredicate : public LogAnalysis::LogPredicate
     {
         std::string key_;
-        LogValue value_;
+        ::LogValue value_;
 
     public:
-        AttributePredicate(std::string k, LogValue v) : key_(std::move(k)), value_(std::move(v)) {}
-        bool test(const LogEntry &entry) const override
+        AttributePredicate(std::string k, ::LogValue v) : key_(std::move(k)), value_(std::move(v)) {}
+        bool test(const ::LogEntry &entry) const override
         {
             auto it = entry.attributes.find(key_);
             return it != entry.attributes.end() && it->second == value_;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AttributePredicate>(key_, value_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<AttributePredicate>(key_, value_); }
     };
 
-    class AttributeRangePredicate : public LogPredicate
+    class AttributeRangePredicate : public LogAnalysis::LogPredicate
     {
         std::string key_;
-        LogValue min_, max_;
+        ::LogValue min_, max_;
 
     public:
-        AttributeRangePredicate(std::string k, LogValue min, LogValue max)
+        AttributeRangePredicate(std::string k, ::LogValue min, ::LogValue max)
             : key_(std::move(k)), min_(std::move(min)), max_(std::move(max)) {}
 
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             auto it = entry.attributes.find(key_);
             if (it == entry.attributes.end())
@@ -148,7 +150,7 @@ namespace Filters
                 return val >= min_ && val <= max_;
             }
 
-            auto to_double = [](const LogValue &v) -> std::optional<double>
+            auto to_double = [](const ::LogValue &v) -> std::optional<double>
             {
                 return std::visit([](auto &&arg) -> std::optional<double>
                                   {
@@ -167,17 +169,17 @@ namespace Filters
             }
             return false;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AttributeRangePredicate>(key_, min_, max_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<AttributeRangePredicate>(key_, min_, max_); }
     };
 
-    class SincePredicate : public LogPredicate
+    class SincePredicate : public LogAnalysis::LogPredicate
     {
         std::chrono::system_clock::duration duration_;
         mutable std::optional<std::chrono::system_clock::time_point> reference_time_;
 
     public:
         explicit SincePredicate(std::chrono::system_clock::duration d) : duration_(d) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             if (!reference_time_)
             {
@@ -185,17 +187,17 @@ namespace Filters
             }
             return entry.time_point >= (*reference_time_ - duration_);
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<SincePredicate>(duration_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<SincePredicate>(duration_); }
     };
 
-    class AnyKeywordPredicate : public LogPredicate
+    class AnyKeywordPredicate : public LogAnalysis::LogPredicate
     {
         std::vector<std::string> keywords_;
         bool case_sensitive_;
 
     public:
         AnyKeywordPredicate(std::vector<std::string> kw, bool cs) : keywords_(std::move(kw)), case_sensitive_(cs) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             for (const auto &kw : keywords_)
             {
@@ -220,65 +222,65 @@ namespace Filters
             }
             return false;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AnyKeywordPredicate>(keywords_, case_sensitive_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<AnyKeywordPredicate>(keywords_, case_sensitive_); }
     };
 
-    class AndPredicate : public LogPredicate
+    class AndPredicate : public LogAnalysis::LogPredicate
     {
-        std::unique_ptr<LogPredicate> a_, b_;
+        std::unique_ptr<LogAnalysis::LogPredicate> a_, b_;
 
     public:
-        AndPredicate(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b)
+        AndPredicate(std::unique_ptr<LogAnalysis::LogPredicate> a, std::unique_ptr<LogAnalysis::LogPredicate> b)
             : a_(std::move(a)), b_(std::move(b)) {}
-        bool test(const LogEntry &entry) const override { return a_->test(entry) && b_->test(entry); }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AndPredicate>(a_->clone(), b_->clone()); }
+        bool test(const ::LogEntry &entry) const override { return a_->test(entry) && b_->test(entry); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<AndPredicate>(a_->clone(), b_->clone()); }
     };
 
-    class OrPredicate : public LogPredicate
+    class OrPredicate : public LogAnalysis::LogPredicate
     {
-        std::unique_ptr<LogPredicate> a_, b_;
+        std::unique_ptr<LogAnalysis::LogPredicate> a_, b_;
 
     public:
-        OrPredicate(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b)
+        OrPredicate(std::unique_ptr<LogAnalysis::LogPredicate> a, std::unique_ptr<LogAnalysis::LogPredicate> b)
             : a_(std::move(a)), b_(std::move(b)) {}
-        bool test(const LogEntry &entry) const override { return a_->test(entry) || b_->test(entry); }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<OrPredicate>(a_->clone(), b_->clone()); }
+        bool test(const ::LogEntry &entry) const override { return a_->test(entry) || b_->test(entry); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<OrPredicate>(a_->clone(), b_->clone()); }
     };
 
-    class NotPredicate : public LogPredicate
+    class NotPredicate : public LogAnalysis::LogPredicate
     {
-        std::unique_ptr<LogPredicate> p_;
+        std::unique_ptr<LogAnalysis::LogPredicate> p_;
 
     public:
-        explicit NotPredicate(std::unique_ptr<LogPredicate> p) : p_(std::move(p)) {}
-        bool test(const LogEntry &entry) const override { return !p_->test(entry); }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<NotPredicate>(p_->clone()); }
+        explicit NotPredicate(std::unique_ptr<LogAnalysis::LogPredicate> p) : p_(std::move(p)) {}
+        bool test(const ::LogEntry &entry) const override { return !p_->test(entry); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<NotPredicate>(p_->clone()); }
     };
 
-    class MinLevelPredicate : public LogPredicate
+    class MinLevelPredicate : public LogAnalysis::LogPredicate
     {
-        LogLevel min_level_;
+        ::LogLevel min_level_;
 
     public:
-        explicit MinLevelPredicate(LogLevel l) : min_level_(l) {}
-        bool test(const LogEntry &entry) const override { return entry.level != LogLevel::UNKNOWN && entry.level >= min_level_; }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<MinLevelPredicate>(min_level_); }
+        explicit MinLevelPredicate(::LogLevel l) : min_level_(l) {}
+        bool test(const ::LogEntry &entry) const override { return entry.level != ::LogLevel::UNKNOWN && entry.level >= min_level_; }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<MinLevelPredicate>(min_level_); }
     };
 
-    class MultiLevelPredicate : public LogPredicate
+    class MultiLevelPredicate : public LogAnalysis::LogPredicate
     {
-        std::vector<LogLevel> levels_;
+        std::vector<::LogLevel> levels_;
 
     public:
-        explicit MultiLevelPredicate(std::vector<LogLevel> l) : levels_(std::move(l)) {}
-        bool test(const LogEntry &entry) const override
+        explicit MultiLevelPredicate(std::vector<::LogLevel> l) : levels_(std::move(l)) {}
+        bool test(const ::LogEntry &entry) const override
         {
             return std::find(levels_.begin(), levels_.end(), entry.level) != levels_.end();
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<MultiLevelPredicate>(levels_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<MultiLevelPredicate>(levels_); }
     };
 
-    class TimeRangePredicate : public LogPredicate
+    class TimeRangePredicate : public LogAnalysis::LogPredicate
     {
         std::optional<std::chrono::system_clock::time_point> start_, end_;
         std::optional<std::string> start_s_, end_s_;
@@ -287,7 +289,7 @@ namespace Filters
         TimeRangePredicate(std::optional<std::chrono::system_clock::time_point> s, std::optional<std::chrono::system_clock::time_point> e,
                            std::optional<std::string> ss = {}, std::optional<std::string> es = {})
             : start_(s), end_(e), start_s_(ss), end_s_(es) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             if (start_ && entry.time_point < *start_)
                 return false;
@@ -299,32 +301,32 @@ namespace Filters
                 return false;
             return true;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<TimeRangePredicate>(start_, end_, start_s_, end_s_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<TimeRangePredicate>(start_, end_, start_s_, end_s_); }
     };
 
-    class TagPredicate : public LogPredicate
+    class TagPredicate : public LogAnalysis::LogPredicate
     {
         std::set<std::string> tags_;
 
     public:
         explicit TagPredicate(std::set<std::string> t) : tags_(std::move(t)) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             for (const auto &tag : tags_)
                 if (!entry.hasTag(tag))
                     return false;
             return true;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<TagPredicate>(tags_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<TagPredicate>(tags_); }
     };
 
-    class MetadataPredicate : public LogPredicate
+    class MetadataPredicate : public LogAnalysis::LogPredicate
     {
         std::optional<std::string> file_, tid_;
 
     public:
         MetadataPredicate(std::optional<std::string> f, std::optional<std::string> t) : file_(f), tid_(t) {}
-        bool test(const LogEntry &entry) const override
+        bool test(const ::LogEntry &entry) const override
         {
             if (file_ && entry.source_file != *file_)
                 return false;
@@ -332,72 +334,72 @@ namespace Filters
                 return false;
             return true;
         }
-        std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<MetadataPredicate>(file_, tid_); }
+        std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<MetadataPredicate>(file_, tid_); }
     };
 
-    std::unique_ptr<LogPredicate> Level(LogLevel l) { return std::make_unique<LevelPredicate>(l); }
-    std::unique_ptr<LogPredicate> MinLevel(LogLevel l) { return std::make_unique<MinLevelPredicate>(l); }
-    std::unique_ptr<LogPredicate> MultiLevel(std::vector<LogLevel> levels) { return std::make_unique<MultiLevelPredicate>(std::move(levels)); }
+    std::unique_ptr<LogAnalysis::LogPredicate> Level(::LogLevel l) { return std::make_unique<LevelPredicate>(l); }
+    std::unique_ptr<LogAnalysis::LogPredicate> MinLevel(::LogLevel l) { return std::make_unique<MinLevelPredicate>(l); }
+    std::unique_ptr<LogAnalysis::LogPredicate> MultiLevel(std::vector<::LogLevel> levels) { return std::make_unique<MultiLevelPredicate>(std::move(levels)); }
 
-    std::unique_ptr<LogPredicate> TimeRange(std::optional<std::chrono::system_clock::time_point> start, std::optional<std::chrono::system_clock::time_point> end)
+    std::unique_ptr<LogAnalysis::LogPredicate> TimeRange(std::optional<std::chrono::system_clock::time_point> start, std::optional<std::chrono::system_clock::time_point> end)
     {
         return std::make_unique<TimeRangePredicate>(start, end);
     }
 
-    std::unique_ptr<LogPredicate> Tag(std::string tag) { return std::make_unique<TagPredicate>(std::set<std::string>{std::move(tag)}); }
-    std::unique_ptr<LogPredicate> ThreadId(std::string tid) { return std::make_unique<MetadataPredicate>(std::nullopt, std::move(tid)); }
-    std::unique_ptr<LogPredicate> SourceFile(std::string file) { return std::make_unique<MetadataPredicate>(std::move(file), std::nullopt); }
+    std::unique_ptr<LogAnalysis::LogPredicate> Tag(std::string tag) { return std::make_unique<TagPredicate>(std::set<std::string>{std::move(tag)}); }
+    std::unique_ptr<LogAnalysis::LogPredicate> ThreadId(std::string tid) { return std::make_unique<MetadataPredicate>(std::nullopt, std::move(tid)); }
+    std::unique_ptr<LogAnalysis::LogPredicate> SourceFile(std::string file) { return std::make_unique<MetadataPredicate>(std::move(file), std::nullopt); }
 
-    std::unique_ptr<LogPredicate> Keyword(std::string k, bool case_sensitive)
+    std::unique_ptr<LogAnalysis::LogPredicate> Keyword(std::string k, bool case_sensitive)
     {
         return std::make_unique<KeywordPredicate>(std::move(k), case_sensitive);
     }
 
-    std::unique_ptr<LogPredicate> Regex(std::string pattern)
+    std::unique_ptr<LogAnalysis::LogPredicate> Regex(std::string pattern)
     {
         return std::make_unique<RegexPredicate>(std::move(pattern));
     }
 
-    std::unique_ptr<LogPredicate> Attribute(std::string key, LogValue val)
+    std::unique_ptr<LogAnalysis::LogPredicate> Attribute(std::string key, ::LogValue val)
     {
         return std::make_unique<AttributePredicate>(std::move(key), std::move(val));
     }
 
-    std::unique_ptr<LogPredicate> AttributeRange(std::string key, LogValue min, LogValue max)
+    std::unique_ptr<LogAnalysis::LogPredicate> AttributeRange(std::string key, ::LogValue min, ::LogValue max)
     {
         return std::make_unique<AttributeRangePredicate>(std::move(key), std::move(min), std::move(max));
     }
 
-    std::unique_ptr<LogPredicate> Since(std::chrono::system_clock::duration d)
+    std::unique_ptr<LogAnalysis::LogPredicate> Since(std::chrono::system_clock::duration d)
     {
         return std::make_unique<SincePredicate>(d);
     }
 
-    std::unique_ptr<LogPredicate> AnyKeyword(std::vector<std::string> keywords, bool case_sensitive)
+    std::unique_ptr<LogAnalysis::LogPredicate> AnyKeyword(std::vector<std::string> keywords, bool case_sensitive)
     {
         return std::make_unique<AnyKeywordPredicate>(std::move(keywords), case_sensitive);
     }
 
-    std::unique_ptr<LogPredicate> And(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b)
+    std::unique_ptr<LogAnalysis::LogPredicate> And(std::unique_ptr<LogAnalysis::LogPredicate> a, std::unique_ptr<LogAnalysis::LogPredicate> b)
     {
         return std::make_unique<AndPredicate>(std::move(a), std::move(b));
     }
 
-    std::unique_ptr<LogPredicate> Or(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b)
+    std::unique_ptr<LogAnalysis::LogPredicate> Or(std::unique_ptr<LogAnalysis::LogPredicate> a, std::unique_ptr<LogAnalysis::LogPredicate> b)
     {
         return std::make_unique<OrPredicate>(std::move(a), std::move(b));
     }
 
-    std::unique_ptr<LogPredicate> Not(std::unique_ptr<LogPredicate> p)
+    std::unique_ptr<LogAnalysis::LogPredicate> Not(std::unique_ptr<LogAnalysis::LogPredicate> p)
     {
         return std::make_unique<NotPredicate>(std::move(p));
     }
 }
 
-std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const
+std::unique_ptr<LogAnalysis::LogPredicate> LogAnalysis::FilterOptions::toPredicate() const
 {
-    std::unique_ptr<LogPredicate> root = nullptr;
-    auto combine = [&](std::unique_ptr<LogPredicate> next)
+    std::unique_ptr<LogAnalysis::LogPredicate> root = nullptr;
+    auto combine = [&](std::unique_ptr<LogAnalysis::LogPredicate> next)
     {
         if (!root)
             root = std::move(next);
@@ -438,10 +440,10 @@ std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const
 
     if (!root)
     {
-        struct AllPredicate : LogPredicate
+        struct AllPredicate : LogAnalysis::LogPredicate
         {
-            bool test(const LogEntry &) const override { return true; }
-            std::unique_ptr<LogPredicate> clone() const override { return std::make_unique<AllPredicate>(); }
+            bool test(const ::LogEntry &) const override { return true; }
+            std::unique_ptr<LogAnalysis::LogPredicate> clone() const override { return std::make_unique<AllPredicate>(); }
         };
         root = std::make_unique<AllPredicate>();
     }
@@ -452,55 +454,52 @@ std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const
 }
 
 // --- LogSource Implementation ---
-namespace LogAnalysis { // Qualified namespace for LogSource methods
-    LogSource::LogSource(const std::string& path, SourceType type, bool recursive)
-        : path_(path), type_(type), recursive_(recursive) {
-        if (type_ == SourceType::DIRECTORY) {
-            resolveFilePaths();
-        } else { // SourceType::FILE or SourceType::STD_IN
-            resolved_file_paths_.push_back(path_);
-        }
+LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type, bool recursive)
+    : path_(path), type_(type), recursive_(recursive) {
+    if (type_ == SourceType::DIRECTORY) {
+        resolveFilePaths();
+    } else { // SourceType::FILE or SourceType::STD_IN
+        resolved_file_paths_.push_back(path_);
+    }
+}
+
+std::vector<std::string> LogAnalysis::LogSource::getFilePaths() const {
+    if (type_ == SourceType::DIRECTORY && resolved_file_paths_.empty()) {
+        const_cast<LogSource*>(this)->resolveFilePaths(); // Resolve if not already done
+    }
+    return resolved_file_paths_;
+}
+
+void LogAnalysis::LogSource::resolveFilePaths() const {
+    resolved_file_paths_.clear(); // Clear previous paths
+    if (type_ == SourceType::FILE || type_ == SourceType::STD_IN) {
+        resolved_file_paths_.push_back(path_);
+        return;
     }
 
-    std::vector<std::string> LogSource::getFilePaths() const {
-        if (type_ == SourceType::DIRECTORY && resolved_file_paths_.empty()) {
-            const_cast<LogSource*>(this)->resolveFilePaths(); // Resolve if not already done
-        }
-        return resolved_file_paths_;
+    if (!std::filesystem::exists(path_) || !std::filesystem::is_directory(path_)) {
+        // Handle error or throw exception for invalid directory
+        std::cerr << "Warning: Directory not found or not a directory: " << path_ << std::endl;
+        return;
     }
 
-    void LogSource::resolveFilePaths() const {
-        resolved_file_paths_.clear(); // Clear previous paths
-        if (type_ == SourceType::FILE || type_ == SourceType::STD_IN) {
-            resolved_file_paths_.push_back(path_);
-            return;
-        }
-
-        if (!std::filesystem::exists(path_) || !std::filesystem::is_directory(path_)) {
-            // Handle error or throw exception for invalid directory
-            std::cerr << "Warning: Directory not found or not a directory: " << path_ << std::endl;
-            return;
-        }
-
-        if (recursive_) {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(path_)) {
-                if (std::filesystem::is_regular_file(entry.status())) {
-                    resolved_file_paths_.push_back(entry.path().string());
-                }
+    if (recursive_) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(path_)) {
+            if (std::filesystem::is_regular_file(entry.status())) {
+                resolved_file_paths_.push_back(entry.path().string());
             }
-        } else {
-            for (const auto& entry : std::filesystem::directory_iterator(path_)) {
-                if (std::filesystem::is_regular_file(entry.status())) {
-                    resolved_file_paths_.push_back(entry.path().string());
-                }
+        }
+    } else {
+        for (const auto& entry : std::filesystem::directory_iterator(path_)) {
+            if (std::filesystem::is_regular_file(entry.status())) {
+                resolved_file_paths_.push_back(entry.path().string());
             }
         }
     }
-} // namespace LogAnalysis
-
+}
 // --- Exporters Implementation ---
 
-void JsonExporter::exportStats(const LogStatistics &stats)
+void LogAnalysis::JsonExporter::exportStats(const LogStatistics &stats)
 {
     out_ << "{\n";
     out_ << "  \"total_entries\": " << stats.total_entries << ",\n";
@@ -511,13 +510,13 @@ void JsonExporter::exportStats(const LogStatistics &stats)
     {
         if (!first)
             out_ << ",\n";
-        out_ << "    \"" << LogEntry::levelToString(level) << "\": " << count;
+        out_ << "    \"" << ::LogEntry::levelToString(level) << "\": " << count;
         first = false;
     }
     out_ << "\n  }\n}\n";
 }
 
-void JsonExporter::exportEntries(std::span<const LogEntry> entries)
+void LogAnalysis::JsonExporter::exportEntries(std::span<const ::LogEntry> entries)
 {
     out_ << "[\n";
     for (size_t i = 0; i < entries.size(); ++i)
@@ -529,20 +528,20 @@ void JsonExporter::exportEntries(std::span<const LogEntry> entries)
     out_ << "\n]\n";
 }
 
-void CsvExporter::exportStats(const LogStatistics &stats)
+void LogAnalysis::CsvExporter::exportStats(const LogStatistics &stats)
 {
     out_ << "Metric,Value\n";
     out_ << "total_entries," << stats.total_entries << "\n";
     out_ << "duration_seconds," << stats.duration.count() << "\n";
 }
 
-void CsvExporter::exportEntries(std::span<const LogEntry> entries)
+void LogAnalysis::CsvExporter::exportEntries(std::span<const ::LogEntry> entries)
 {
     out_ << "Timestamp,Level,Message,ThreadId\n";
     for (const auto &entry : entries)
     {
         out_ << "\"" << entry.timestamp << "\",";
-        out_ << "\"" << LogEntry::levelToString(entry.level) << "\",";
+        out_ << "\"" << ::LogEntry::levelToString(entry.level) << "\",";
         // Escape quotes in message
         std::string msg = entry.message;
         size_t pos = 0;
@@ -556,7 +555,7 @@ void CsvExporter::exportEntries(std::span<const LogEntry> entries)
     }
 }
 
-void MarkdownExporter::exportStats(const LogStatistics &stats)
+void LogAnalysis::MarkdownExporter::exportStats(const LogStatistics &stats)
 {
     out_ << "# Log Analysis Statistics\n\n";
     out_ << "| Metric | Value |\n";
@@ -569,21 +568,21 @@ void MarkdownExporter::exportStats(const LogStatistics &stats)
     out_ << "| :--- | :--- |\n";
     for (const auto &[level, count] : stats.level_counts)
     {
-        out_ << "| " << LogEntry::levelToString(level) << " | " << count << " |\n";
+        out_ << "| " << ::LogEntry::levelToString(level) << " | " << count << " |\n";
     }
 }
 
-void MarkdownExporter::exportEntries(std::span<const LogEntry> entries)
+void LogAnalysis::MarkdownExporter::exportEntries(std::span<const ::LogEntry> entries)
 {
     out_ << "| Timestamp | Level | Message |\n";
     out_ << "| :--- | :--- | :--- |\n";
     for (const auto &entry : entries)
     {
-        out_ << "| " << entry.timestamp << " | " << LogEntry::levelToString(entry.level) << " | " << entry.message << " |\n";
+        out_ << "| " << entry.timestamp << " | " << ::LogEntry::levelToString(entry.level) << " | " << entry.message << " |\n";
     }
 }
 
-void ConsoleExporter::exportStats(const LogStatistics &stats)
+void LogAnalysis::ConsoleExporter::exportStats(const LogStatistics &stats)
 {
     auto bold = use_color_ ? "\033[1m" : "";
     auto reset = use_color_ ? "\033[0m" : "";
@@ -597,11 +596,11 @@ void ConsoleExporter::exportStats(const LogStatistics &stats)
          << bold << "Log Level Distribution:" << reset << "\n";
     for (const auto &[level, count] : stats.level_counts)
     {
-        out_ << "  " << std::left << std::setw(10) << LogEntry::levelToString(level) << ": " << count << "\n";
+        out_ << "  " << std::left << std::setw(10) << ::LogEntry::levelToString(level) << ": " << count << "\n";
     }
 }
 
-void ConsoleExporter::exportEntries(std::span<const LogEntry> entries)
+void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> entries)
 {
     for (const auto &entry : entries)
     {
@@ -610,45 +609,44 @@ void ConsoleExporter::exportEntries(std::span<const LogEntry> entries)
             std::string color = "";
             switch (entry.level)
             {
-            case LogLevel::ERROR:
-            case LogLevel::CRITICAL:
+            case ::LogLevel::ERROR:
+            case ::LogLevel::CRITICAL:
                 color = "\033[31m";
                 break; // Red
-            case LogLevel::WARNING:
+            case ::LogLevel::WARNING:
                 color = "\033[33m";
                 break; // Yellow
-            case LogLevel::INFO:
+            case ::LogLevel::INFO:
                 color = "\033[32m";
                 break; // Green
-            case LogLevel::DEBUG:
+            case ::LogLevel::DEBUG:
                 color = "\033[34m";
                 break; // Blue
             default:
                 break;
             }
-            out_ << "\033[90m[" << entry.timestamp << "]\033[0m " << color << "[" << std::setw(7) << LogEntry::levelToString(entry.level) << "]\033[0m " << entry.message << "\n";
+            out_ << "\033[90m[" << entry.timestamp << "]\033[0m " << color << "[" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "]\033[0m " << entry.message << "\n";
         }
         else
         {
-            out_ << "[" << entry.timestamp << "] [" << std::setw(7) << LogEntry::levelToString(entry.level) << "] " << entry.message << "\n";
+            out_ << "[" << entry.timestamp << "] [" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "] " << entry.message << "\n";
         }
     }
 }
 
 // --- LogAnalyzer Implementation ---
-namespace LogAnalysis { // Start LogAnalysis namespace for LogAnalyzer
 
-LogAnalyzer::LogAnalyzer() : rw_mutex_()
+LogAnalysis::LogAnalyzer::LogAnalyzer() : rw_mutex_()
 {
-    legacy_timestamp_regex_ = std::regex(R"(\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\]?)");
-    legacy_level_regex_ = std::regex(R"(\[?(DEBUG|INFO|WARNING|WARN|ERROR|ERR|CRITICAL|CRIT|FATAL)\]?)");
+    this->legacy_timestamp_regex_ = std::regex(R"(\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\]?)");
+    this->legacy_level_regex_ = std::regex(R"(\[?(DEBUG|INFO|WARNING|WARN|ERROR|ERR|CRITICAL|CRIT|FATAL)\]?)");
 }
 
-void LogAnalyzer::setParsingConfig(const ParsingConfig &config)
+void LogAnalysis::LogAnalyzer::setParsingConfig(const LogAnalysis::ParsingConfig &config)
 {
-    config_ = config;
+    this->config_ = config;
     std::string processed_pattern = config.line_pattern;
-    named_group_indices_.clear();
+    this->named_group_indices_.clear();
 
     if (!processed_pattern.empty())
     {
@@ -672,7 +670,7 @@ void LogAnalyzer::setParsingConfig(const ParsingConfig &config)
                         if (end_bracket != std::string::npos)
                         {
                             std::string name = processed_pattern.substr(i + 3, end_bracket - (i + 3));
-                            named_group_indices_[name] = current_group;
+                            this->named_group_indices_[name] = current_group;
                             final_pattern += '(';
                             i = end_bracket;
                         }
@@ -701,7 +699,7 @@ void LogAnalyzer::setParsingConfig(const ParsingConfig &config)
 
         try
         {
-            strict_regex_ = std::regex(final_pattern);
+            this->strict_regex_ = std::regex(final_pattern);
         }
         catch (const std::regex_error &e)
         {
@@ -709,11 +707,11 @@ void LogAnalyzer::setParsingConfig(const ParsingConfig &config)
         }
     }
 
-    if (config_.entry_start_pattern)
+    if (this->config_.entry_start_pattern)
     {
         try
         {
-            entry_start_regex_ = std::regex(*config_.entry_start_pattern);
+            this->entry_start_regex_ = std::regex(*this->config_.entry_start_pattern);
         }
         catch (const std::regex_error &e)
         {
@@ -722,20 +720,20 @@ void LogAnalyzer::setParsingConfig(const ParsingConfig &config)
     }
 }
 
-void LogAnalyzer::setCustomPatterns(std::string_view timestamp_regex, std::string_view level_regex)
+void LogAnalysis::LogAnalyzer::setCustomPatterns(std::string_view timestamp_regex, std::string_view level_regex)
 {
-    legacy_timestamp_regex_ = std::regex(std::string(timestamp_regex));
-    legacy_level_regex_ = std::regex(std::string(level_regex));
-    config_.line_pattern.clear();
-    named_group_indices_.clear();
+    this->legacy_timestamp_regex_ = std::regex(std::string(timestamp_regex));
+    this->legacy_level_regex_ = std::regex(std::string(level_regex));
+    this->config_.line_pattern.clear();
+    this->named_group_indices_.clear();
 }
 
-std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
+std::expected<std::pair<LoadResult, std::vector<::LogEntry>>, std::string> LogAnalyzer::loadFileWithStats(
     const std::filesystem::path &filepath,
-    ProgressCallback progress)
+    LogAnalysis::ProgressCallback progress)
 {
     LoadResult result = {0, 0};
-    std::vector<LogEntry> new_entries;
+    std::vector<::LogEntry> new_entries;
 
     try
     {
@@ -759,14 +757,14 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
         {
             if (current_entry_buffer.empty())
                 return;
-            LogEntry entry = parseLogLine(current_entry_buffer, entry_line_start);
-            if (config_.strict_mode && entry.timestamp.empty() && entry.message.empty())
+            ::LogEntry entry = parseLogLine(current_entry_buffer, entry_line_start);
+            if (this->config_.strict_mode && entry.timestamp.empty() && entry.message.empty())
             {
                 result.error_count++;
             }
             else
             {
-                applyEnrichers(entry);
+                this->applyEnrichers(entry);
                 new_entries.push_back(std::move(entry));
                 result.loaded_count++;
             }
@@ -790,9 +788,9 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
                 line.pop_back();
 
             bool is_new_entry = true;
-            if (entry_start_regex_)
+            if (this->entry_start_regex_)
             {
-                is_new_entry = std::regex_search(line, *entry_start_regex_);
+                is_new_entry = std::regex_search(line, *this->entry_start_regex_);
             }
 
             if (is_new_entry)
@@ -805,8 +803,8 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
             { // Not a new entry
                 // Apply max_continuation_lines limit
                 if (current_entry_buffer.empty() ||
-                    (config_.max_continuation_lines > 0 &&
-                     static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= config_.max_continuation_lines))
+                    (this->config_.max_continuation_lines > 0 &&
+                     static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= this->config_.max_continuation_lines))
                 {
                     // If buffer is empty or limit reached, treat current line as start of a new entry
                     process_buffer(); // Process the accumulated buffer as a full entry
@@ -819,12 +817,12 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
                 }
             }
 
-            if (config_.max_errors > 0 && result.error_count >= config_.max_errors)
+            if (this->config_.max_errors > 0 && result.error_count >= this->config_.max_errors)
             {
                 break;
             }
         }
-        if (config_.max_errors == 0 || result.error_count < config_.max_errors)
+        if (this->config_.max_errors == 0 || result.error_count < this->config_.max_errors)
         {
             process_buffer();
         }
@@ -832,47 +830,55 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
         if (progress)
             progress({bytes_processed, total_bytes, line_number});
 
-        {
-            std::unique_lock lock(rw_mutex_);
-            entries_.insert(entries_.end(), std::make_move_iterator(new_entries.begin()), std::make_move_iterator(new_entries.end()));
-            cached_stats_.reset();
-        }
     }
     catch (const std::exception &e)
     {
         return std::unexpected(e.what());
     }
 
-    return result;
+    return std::make_pair(result, std::move(new_entries));
 }
 
-std::expected<void, std::string> LogAnalyzer::loadFile(const std::filesystem::path &filepath)
+std::expected<void, std::string> LogAnalysis::LogAnalyzer::loadFile(const std::filesystem::path &filepath)
 {
-    auto result = loadFileWithStats(filepath);
-    if (!result)
-        return std::unexpected(result.error());
+    auto result_pair = loadFileWithStats(filepath);
+    if (!result_pair)
+        return std::unexpected(result_pair.error());
+    
+    // After successful load, move the entries into `this->entries_`
+    {
+        std::unique_lock lock(this->rw_mutex_);
+        this->entries_.insert(this->entries_.end(), std::make_move_iterator(result_pair->second.begin()), std::make_move_iterator(result_pair->second.end()));
+        this->cached_stats_.reset();
+    }
     return {};
 }
 
-std::future<LoadResult> LogAnalyzer::loadFileAsync(
+std::future<LogAnalysis::LoadResult> LogAnalysis::LogAnalyzer::loadFileAsync(
     std::filesystem::path filepath,
-    ProgressCallback progress)
+    LogAnalysis::ProgressCallback progress)
 {
     return std::async(std::launch::async, [this, filepath, progress]() -> LoadResult
                       {
-        auto result = this->loadFileWithStats(filepath, progress);
-        if (result) return *result;
-        throw std::runtime_error(result.error()); });
+        auto result_pair = this->loadFileWithStats(filepath, progress);
+        if (result_pair) {
+            // Aggregate entries from this single file load into the main this->entries_ vector
+            std::unique_lock lock(this->rw_mutex_);
+            this->entries_.insert(this->entries_.end(), std::make_move_iterator(result_pair->second.begin()), std::make_move_iterator(result_pair->second.end()));
+            this->cached_stats_.reset();
+            return result_pair->first; // Return only the LoadResult part
+        }
+        throw std::runtime_error(result_pair.error()); });
 }
 
-std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, ParallelConfig config)
+std::future<LogAnalysis::LoadResult> LogAnalysis::LogAnalyzer::loadParallel(std::filesystem::path path, LogAnalysis::ParallelConfig config)
 {
     return std::async(std::launch::async, [this, path, config]() -> LoadResult
                       {
         {
-            std::unique_lock lock(rw_mutex_);
-            entries_.clear();
-            cached_stats_.reset();
+            std::unique_lock lock(this->rw_mutex_);
+            this->entries_.clear();
+            this->cached_stats_.reset();
         }
 
         std::ifstream file(path, std::ios::ate | std::ios::binary);
@@ -881,7 +887,7 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
         size_t total_size = file.tellg();
         size_t chunk_size = config.chunk_size_mb * 1024 * 1024;
         
-        std::vector<std::future<std::pair<std::vector<LogEntry>, size_t>>> futures;
+        std::vector<std::future<std::pair<std::vector<::LogEntry>, size_t>>> futures;
         std::atomic<size_t> total_errors = 0;
 
         size_t current_pos = 0;
@@ -901,19 +907,19 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
                 std::ifstream f(path, std::ios::binary);
                 f.seekg(start);
                 std::string line;
-                std::vector<LogEntry> chunk_entries;
+                std::vector<::LogEntry> chunk_entries;
                 std::string buffer;
                 size_t lines_read = 0;
 
                 while (f.tellg() < static_cast<std::streampos>(end) && std::getline(f, line)) {
                     lines_read++;
                     bool is_new = true;
-                    if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
+                    if (this->entry_start_regex_) is_new = std::regex_search(line, *this->entry_start_regex_);
                     
                     if (is_new && !buffer.empty()) {
-                        LogEntry entry = parseLogLine(buffer);
+                        ::LogEntry entry = this->parseLogLine(buffer);
                         if (!entry.timestamp.empty() || !entry.message.empty()) {
-                            applyEnrichers(entry);
+                            this->applyEnrichers(entry);
                             chunk_entries.push_back(std::move(entry));
                         } else total_errors.fetch_add(1);
                         buffer = line;
@@ -923,9 +929,9 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
                     }
                 }
                 if (!buffer.empty()) {
-                    LogEntry entry = parseLogLine(buffer);
+                    ::LogEntry entry = this->parseLogLine(buffer);
                     if (!entry.timestamp.empty() || !entry.message.empty()) {
-                        applyEnrichers(entry);
+                        this->applyEnrichers(entry);
                         chunk_entries.push_back(std::move(entry));
                     } else total_errors.fetch_add(1);
                 }
@@ -940,106 +946,24 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
             auto [chunk_entries, lines] = f.get();
             res.loaded_count += chunk_entries.size();
             total_lines += lines;
-            std::unique_lock lock(rw_mutex_);
-            entries_.insert(entries_.end(), std::make_move_iterator(chunk_entries.begin()), std::make_move_iterator(chunk_entries.end()));
+            std::unique_lock lock(this->rw_mutex_);
+            this->entries_.insert(this->entries_.end(), std::make_move_iterator(chunk_entries.begin()), std::make_move_iterator(chunk_entries.end()));
         }
         res.error_count = total_errors.load();
         if (config.progress) config.progress({total_size, total_size, total_lines});
         return res; });
 }
 
-std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, ParallelConfig config)
-{
-    return std::async(std::launch::async, [this, path, config]() -> LoadResult
-                      {
-        {
-            std::unique_lock lock(rw_mutex_);
-            entries_.clear();
-            cached_stats_.reset();
-        }
 
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) throw std::runtime_error("Could not open file: " + path.string());
-        
-        size_t total_size = file.tellg();
-        size_t chunk_size = config.chunk_size_mb * 1024 * 1024;
-        
-        std::vector<std::future<std::pair<std::vector<LogEntry>, size_t>>> futures;
-        std::atomic<size_t> total_errors = 0;
-
-        size_t current_pos = 0;
-        while (current_pos < total_size) {
-            size_t start = current_pos;
-            size_t end = std::min(start + chunk_size, total_size);
-
-            if (end < total_size) {
-                file.seekg(end);
-                std::string temp;
-                std::getline(file, temp);
-                end = file.tellg();
-                if (end == (size_t)-1) end = total_size;
-            }
-
-            futures.push_back(std::async(std::launch::async, [this, path, start, end, &total_errors]() {
-                std::ifstream f(path, std::ios::binary);
-                f.seekg(start);
-                std::string line;
-                std::vector<LogEntry> chunk_entries;
-                std::string buffer;
-                size_t lines_read = 0;
-
-                while (f.tellg() < static_cast<std::streampos>(end) && std::getline(f, line)) {
-                    lines_read++;
-                    bool is_new = true;
-                    if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
-                    
-                    if (is_new && !buffer.empty()) {
-                        LogEntry entry = parseLogLine(buffer);
-                        if (!entry.timestamp.empty() || !entry.message.empty()) {
-                            applyEnrichers(entry);
-                            chunk_entries.push_back(std::move(entry));
-                        } else total_errors.fetch_add(1);
-                        buffer = line;
-                    } else {
-                        if (!buffer.empty()) buffer += "\n";
-                        buffer += line;
-                    }
-                }
-                if (!buffer.empty()) {
-                    LogEntry entry = parseLogLine(buffer);
-                    if (!entry.timestamp.empty() || !entry.message.empty()) {
-                        applyEnrichers(entry);
-                        chunk_entries.push_back(std::move(entry));
-                    } else total_errors.fetch_add(1);
-                }
-                return std::make_pair(std::move(chunk_entries), lines_read);
-            }));
-            current_pos = end;
-        }
-
-        LoadResult res = {0, 0};
-        size_t total_lines = 0;
-        for (auto& f : futures) {
-            auto [chunk_entries, lines] = f.get();
-            res.loaded_count += chunk_entries.size();
-            total_lines += lines;
-            std::unique_lock lock(rw_mutex_);
-            entries_.insert(entries_.end(), std::make_move_iterator(chunk_entries.begin()), std::make_move_iterator(chunk_entries.end()));
-        }
-        res.error_count = total_errors.load();
-        if (config.progress) config.progress({total_size, total_size, total_lines});
         return res; });
-}
+} // Correct closing brace for loadParallel function
 
-std::expected<LoadResult, std::string> LogAnalyzer::loadLogSources(const std::vector<LogSource>& sources, ProgressCallback progress) {
-    LoadResult total_result = {0, 0};
-    std::vector<LogEntry> collected_entries; // Temporarily store entries from all sources
+std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, LogAnalysis::ProgressCallback progress) {
+    LogAnalysis::LoadResult total_result = {0, 0};
+    std::vector<::LogEntry> collected_entries; // Temporarily store entries from all sources
 
     for (const auto& source : sources) {
-        if (source.getType() == LogSource::SourceType::STD_IN) {
-            // Handle STDIN separately, as it's a stream, not a file path.
-            // For simplicity, for now, we'll just log a warning or error.
-            // A proper implementation would involve reading from std::cin.
+        if (source.getType() == LogAnalysis::LogSource::SourceType::STD_IN) {
             std::cerr << "Warning: STDIN source type not fully supported yet in loadLogSources. Skipping." << std::endl;
             total_result.error_count++;
             continue;
@@ -1048,166 +972,34 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadLogSources(const std::ve
         auto file_paths = source.getFilePaths();
         for (const auto& filepath_str : file_paths) {
             std::filesystem::path filepath(filepath_str);
-            auto result = loadFileWithStats(filepath, progress); // Use loadFileWithStats
-            if (result) {
-                total_result.loaded_count += result->loaded_count;
-                total_result.error_count += result->error_count;
-                // Since loadFileWithStats replaces entries_, we need to collect them
-                // and then set entries_ once all sources are processed.
-                // This will clear the internal entries_ after each file is loaded,
-                // so we must append to a temporary collection first.
-
-                // Temporarily move loaded entries to collected_entries to avoid data loss
-                // This means the current implementation of loadFileWithStats needs to be tweaked
-                // to not clear entries_ or we need a different approach.
-                // For now, let's assume loadFileWithStats loads into a *temporary* internal buffer
-                // or we adapt it to return the entries.
-
-                // As per existing loadFileWithStats, it stores entries internally.
-                // To support multiple files, we need to adapt it.
-                // A quick fix for now: let's modify loadFileWithStats to return the entries.
-                // This is a more significant change. For this iteration, let's simplify.
-                // If loadFileWithStats loads into `entries_`, calling it multiple times will overwrite.
-                // The design implies combining results.
-
-                // Let's modify this call to accumulate entries.
-                // This requires a change in loadFileWithStats signature or its behavior.
-                // For now, I'll adapt the existing behavior and point out the limitation.
-                // A proper fix would be for loadFileWithStats to return the new entries,
-                // and loadLogSources to aggregate them.
-                // But the current loadFileWithStats operates on `entries_` directly.
-
-                // Alternative: Load one file at a time, and `entries_` will reflect the last file.
-                // This contradicts "LogAnalyzer to accept multiple sources".
-
-                // Re-thinking: The most straightforward way to implement `loadLogSources` given
-                // `loadFileWithStats` *replaces* `entries_` is to have `loadLogSources`
-                // aggregate new entries, then replace the analyzer's entries_ once.
-
-                std::vector<LogEntry> temp_entries;
-                try
-                {
-                    std::ifstream file(filepath, std::ios::ate | std::ios::binary);
-                    if (!file.is_open())
-                    {
-                        total_result.error_count++;
-                        continue;
-                    }
-
-                    size_t total_bytes = file.tellg();
-                    file.seekg(0, std::ios::beg);
-
-                    std::string line;
-                    size_t line_number = 0;
-                    size_t bytes_processed = 0;
-
-                    std::string current_entry_buffer;
-                    size_t entry_line_start = 1;
-
-                    auto process_buffer = [&]()
-                    {
-                        if (current_entry_buffer.empty())
-                            return;
-                        LogEntry entry = parseLogLine(current_entry_buffer, entry_line_start);
-                        if (config_.strict_mode && entry.timestamp.empty() && entry.message.empty())
-                        {
-                            total_result.error_count++;
-                        }
-                        else
-                        {
-                            applyEnrichers(entry);
-                            temp_entries.push_back(std::move(entry));
-                            total_result.loaded_count++;
-                        }
-                        current_entry_buffer.clear();
-                    };
-
-                    while (std::getline(file, line))
-                    {
-                        line_number++;
-                        size_t line_bytes = line.size() + 1;
-                        bytes_processed += line_bytes;
-
-                        if (progress && (line_number % 100 == 0 || bytes_processed >= total_bytes))
-                        {
-                            progress({bytes_processed, total_bytes, line_number});
-                        }
-
-                        if (line.empty())
-                            continue;
-                        if (line.back() == '\r')
-                            line.pop_back();
-
-                        bool is_new_entry = true;
-                        if (entry_start_regex_)
-                        {
-                            is_new_entry = std::regex_search(line, *entry_start_regex_);
-                        }
-
-                        if (is_new_entry)
-                        {
-                            process_buffer();
-                            current_entry_buffer = line;
-                            entry_line_start = line_number;
-                        }
-                        else
-                        { // Not a new entry
-                            // Apply max_continuation_lines limit
-                            if (current_entry_buffer.empty() ||
-                                (config_.max_continuation_lines > 0 &&
-                                 static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= config_.max_continuation_lines))
-                            {
-                                // If buffer is empty or limit reached, treat current line as start of a new entry
-                                process_buffer(); // Process the accumulated buffer as a full entry
-                                current_entry_buffer = line;
-                                entry_line_start = line_number;
-                            }
-                            else
-                            {
-                                current_entry_buffer += "\n" + line;
-                            }
-                        }
-
-                        if (config_.max_errors > 0 && total_result.error_count >= config_.max_errors)
-                        {
-                            break;
-                        }
-                    }
-                    if (config_.max_errors == 0 || total_result.error_count < config_.max_errors)
-                    {
-                        process_buffer();
-                    }
-
-                    if (progress)
-                        progress({bytes_processed, total_bytes, line_number});
-
-                }
-                catch (const std::exception &e)
-                {
-                    return std::unexpected(e.what());
-                }
+            auto result_pair = loadFileWithStats(filepath, progress); // Use refactored loadFileWithStats
+            if (result_pair) {
+                total_result.loaded_count += result_pair->first.loaded_count;
+                total_result.error_count += result_pair->first.error_count;
+                // Move entries from the result of loadFileWithStats to collected_entries
+                collected_entries.insert(collected_entries.end(), 
+                                         std::make_move_iterator(result_pair->second.begin()), 
+                                         std::make_move_iterator(result_pair->second.end()));
             } else {
-                return std::unexpected(result.error());
+                return std::unexpected(result_pair.error());
             }
-            // Append entries from this file to the collected_entries
-            collected_entries.insert(collected_entries.end(), std::make_move_iterator(temp_entries.begin()), std::make_move_iterator(temp_entries.end()));
         }
     }
 
-    // Replace the analyzer's entries_ with the collected ones
+    // Replace the analyzer's this->entries_ with the collected ones
     {
-        std::unique_lock lock(rw_mutex_);
-        entries_ = std::move(collected_entries);
-        cached_stats_.reset();
+        std::unique_lock lock(this->rw_mutex_);
+        this->entries_ = std::move(collected_entries);
+        this->cached_stats_.reset();
     }
     return total_result;
 }
 
-bool LogAnalyzer::loadLogFile(const std::string &filepath) { return loadLogFile(std::filesystem::path(filepath)); }
-bool LogAnalyzer::loadLogFile(const std::filesystem::path &filepath)
+bool LogAnalysis::LogAnalyzer::loadLogFile(const std::string &filepath) { return LogAnalysis::LogAnalyzer::loadFile(std::filesystem::path(filepath)).has_value(); }
+bool LogAnalysis::LogAnalyzer::loadLogFile(const std::filesystem::path &filepath)
 {
-    auto result = loadFile(filepath);
-    if (!result)
+    auto result = LogAnalysis::LogAnalyzer::loadFile(filepath);
+    if (!result.has_value())
     {
         std::cerr << "Error: " << result.error() << std::endl;
         return false;
@@ -1215,7 +1007,7 @@ bool LogAnalyzer::loadLogFile(const std::filesystem::path &filepath)
     return true;
 }
 
-std::generator<LogEntry> LogAnalyzer::streamEntries(std::filesystem::path filepath)
+std::generator<::LogEntry> LogAnalysis::LogAnalyzer::streamEntries(std::filesystem::path filepath)
 {
     std::ifstream file(filepath);
     if (!file.is_open())
@@ -1229,13 +1021,13 @@ std::generator<LogEntry> LogAnalyzer::streamEntries(std::filesystem::path filepa
     {
         line_number++;
         bool is_new = true;
-        if (entry_start_regex_)
-            is_new = std::regex_search(line, *entry_start_regex_);
+        if (this->entry_start_regex_)
+            is_new = std::regex_search(line, *this->entry_start_regex_);
 
         if (is_new && !buffer.empty())
         {
-            LogEntry entry = parseLogLine(buffer, line_number);
-            applyEnrichers(entry);
+            ::LogEntry entry = this->parseLogLine(buffer, line_number);
+            this->applyEnrichers(entry);
             co_yield entry;
             buffer = line;
         }
@@ -1248,13 +1040,13 @@ std::generator<LogEntry> LogAnalyzer::streamEntries(std::filesystem::path filepa
     }
     if (!buffer.empty())
     {
-        LogEntry entry = parseLogLine(buffer, line_number);
-        applyEnrichers(entry);
+        ::LogEntry entry = this->parseLogLine(buffer, line_number);
+        this->applyEnrichers(entry);
         co_yield entry;
     }
 }
 
-std::generator<LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::path filepath, FilterOptions options)
+std::generator<::LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::path filepath, FilterOptions options)
 {
     auto pred = options.toPredicate();
     for (const auto &entry : streamEntries(filepath))
@@ -1264,7 +1056,7 @@ std::generator<LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::pat
     }
 }
 
-std::generator<LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::path filepath, const LogPredicate &predicate)
+std::generator<::LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::path filepath, const LogAnalysis::LogPredicate &predicate)
 {
     for (const auto &entry : streamEntries(filepath))
     {
@@ -1273,9 +1065,9 @@ std::generator<LogEntry> LogAnalyzer::streamFilteredEntries(std::filesystem::pat
     }
 }
 
-std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::filesystem::path &filepath)
+std::expected<LogAnalysis::LogStatistics, std::string> LogAnalysis::LogAnalyzer::analyzeStream(const std::filesystem::path &filepath)
 {
-    LogStatistics stats;
+    LogAnalysis::LogStatistics stats;
     std::map<std::string, size_t> error_counts;
     try
     {
@@ -1286,7 +1078,7 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
             if (!stats.first_timestamp)
                 stats.first_timestamp = entry.timestamp;
             stats.last_timestamp = entry.timestamp;
-            if (entry.level == LogLevel::ERROR)
+            if (entry.level == ::LogLevel::ERROR)
                 error_counts[entry.message]++;
             if (!entry.thread_id.empty())
                 stats.thread_distribution[entry.thread_id]++;
@@ -1311,12 +1103,12 @@ std::expected<LogStatistics, std::string> LogAnalyzer::analyzeStream(const std::
     return stats;
 }
 
-std::map<LogValue, size_t> LogAnalyzer::getAttributeFrequency(std::string_view attr_key) const
+std::map<::LogValue, size_t> LogAnalysis::LogAnalyzer::getAttributeFrequency(std::string_view attr_key) const
 {
-    std::map<LogValue, size_t> frequency;
+    std::map<::LogValue, size_t> frequency;
     std::string key(attr_key);
-    std::shared_lock lock(rw_mutex_);
-    for (const auto &entry : entries_)
+    std::shared_lock lock(this->rw_mutex_);
+    for (const auto &entry : this->entries_)
     {
         auto it = entry.attributes.find(key);
         if (it != entry.attributes.end())
@@ -1327,12 +1119,12 @@ std::map<LogValue, size_t> LogAnalyzer::getAttributeFrequency(std::string_view a
     return frequency;
 }
 
-std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> LogAnalyzer::getTimeline(std::chrono::system_clock::duration bucket_size) const
+std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> LogAnalysis::LogAnalyzer::getTimeline(std::chrono::system_clock::duration bucket_size) const
 {
     if (bucket_size.count() <= 0)
         return {};
     std::map<std::chrono::system_clock::time_point, size_t> buckets;
-    for (const auto &entry : entries_)
+    for (const auto &entry : this->entries_)
     {
         if (entry.time_point.time_since_epoch().count() == 0)
             continue;
@@ -1343,11 +1135,11 @@ std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> LogAnalyze
     return {buckets.begin(), buckets.end()};
 }
 
-std::vector<LogEntry> LogAnalyzer::getTrace(std::string_view trace_id) const
+std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getTrace(std::string_view trace_id) const
 {
-    std::vector<LogEntry> result;
-    std::shared_lock lock(rw_mutex_);
-    for (const auto &entry : entries_)
+    std::vector<::LogEntry> result;
+    std::shared_lock lock(this->rw_mutex_);
+    for (const auto &entry : this->entries_)
     {
         if (entry.trace_id == trace_id)
         {
@@ -1357,38 +1149,38 @@ std::vector<LogEntry> LogAnalyzer::getTrace(std::string_view trace_id) const
     return result;
 }
 
-std::vector<LogEntry> LogAnalyzer::getEntriesSpan() const
+std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getEntriesSpan() const
 {
-    std::shared_lock lock(rw_mutex_);
-    return entries_;
+    std::shared_lock lock(this->rw_mutex_);
+    return this->entries_;
 }
-std::vector<LogEntry> LogAnalyzer::getEntries() const
+std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getEntries() const
 {
-    std::shared_lock lock(rw_mutex_);
-    return entries_;
+    std::shared_lock lock(this->rw_mutex_);
+    return this->entries_;
 }
-void LogAnalyzer::addEntry(LogEntry entry)
+void LogAnalysis::LogAnalyzer::addEntry(::LogEntry entry)
 {
-    applyEnrichers(entry);
-    std::unique_lock lock(rw_mutex_);
-    entries_.push_back(std::move(entry));
-    cached_stats_.reset();
+    this->applyEnrichers(entry);
+    std::unique_lock lock(this->rw_mutex_);
+    this->entries_.push_back(std::move(entry));
+    this->cached_stats_.reset();
 }
 
-LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
+::LogEntry LogAnalysis::LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
 {
-    LogEntry entry;
+    ::LogEntry entry;
     entry.raw_line = line;
 
-    if (!config_.line_pattern.empty())
+    if (!this->config_.line_pattern.empty())
     {
         std::smatch match;
-        if (std::regex_match(line, match, strict_regex_))
+        if (std::regex_match(line, match, this->strict_regex_))
         {
             auto get_val = [&](const std::string &name) -> std::string
             {
-                auto it = named_group_indices_.find(name);
-                if (it != named_group_indices_.end() && static_cast<size_t>(it->second) < match.size())
+                auto it = this->named_group_indices_.find(name);
+                if (it != this->named_group_indices_.end() && static_cast<size_t>(it->second) < match.size())
                 {
                     return match[it->second].str();
                 }
@@ -1396,7 +1188,7 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
             };
 
             // Named capture groups mapping
-            for (const auto &[group_name, field_name] : config_.field_mapping)
+            for (const auto &[group_name, field_name] : this->config_.field_mapping)
             {
                 std::string val = get_val(group_name);
                 if (val.empty())
@@ -1404,7 +1196,7 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
                 if (field_name == "timestamp")
                     entry.timestamp = val;
                 else if (field_name == "level")
-                    entry.level = LogEntry::parseLevel(val);
+                    entry.level = ::LogEntry::parseLevel(val);
                 else if (field_name == "message")
                     entry.message = val;
                 else if (field_name == "thread_id")
@@ -1422,25 +1214,25 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
             }
 
             // Fallback to indices if field_mapping didn't cover them
-            if (entry.timestamp.empty() && config_.timestamp_index > 0 && (size_t)config_.timestamp_index < match.size())
-                entry.timestamp = match[config_.timestamp_index].str();
+            if (entry.timestamp.empty() && this->config_.timestamp_index > 0 && (size_t)this->config_.timestamp_index < match.size())
+                entry.timestamp = match[this->config_.timestamp_index].str();
 
-            if (entry.level == LogLevel::UNKNOWN && config_.level_index > 0 && (size_t)config_.level_index < match.size())
-                entry.level = LogEntry::parseLevel(match[config_.level_index].str());
+            if (entry.level == ::LogLevel::UNKNOWN && this->config_.level_index > 0 && (size_t)this->config_.level_index < match.size())
+                entry.level = ::LogEntry::parseLevel(match[this->config_.level_index].str());
 
-            if (entry.message.empty() && config_.message_index > 0 && (size_t)config_.message_index < match.size())
-                entry.message = match[config_.message_index].str();
+            if (entry.message.empty() && this->config_.message_index > 0 && (size_t)this->config_.message_index < match.size())
+                entry.message = match[this->config_.message_index].str();
 
-            if (entry.thread_id.empty() && config_.thread_id_index > 0 && (size_t)config_.thread_id_index < match.size())
-                entry.thread_id = match[config_.thread_id_index].str();
+            if (entry.thread_id.empty() && this->config_.thread_id_index > 0 && (size_t)this->config_.thread_id_index < match.size())
+                entry.thread_id = match[this->config_.thread_id_index].str();
 
-            if (entry.source_file.empty() && config_.file_index > 0 && (size_t)config_.file_index < match.size())
-                entry.source_file = match[config_.file_index].str();
+            if (entry.source_file.empty() && this->config_.file_index > 0 && (size_t)this->config_.file_index < match.size())
+                entry.source_file = match[this->config_.file_index].str();
 
-            if (entry.source_line == 0 && config_.line_index > 0 && (size_t)config_.line_index < match.size())
+            if (entry.source_line == 0 && this->config_.line_index > 0 && (size_t)this->config_.line_index < match.size())
                 try
                 {
-                    entry.source_line = std::stoi(match[config_.line_index].str());
+                    entry.source_line = std::stoi(match[this->config_.line_index].str());
                 }
                 catch (...)
                 {
@@ -1450,7 +1242,7 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
             {
                 std::istringstream ss(entry.timestamp);
                 std::tm tm = {};
-                ss >> std::get_time(&tm, config_.time_format.c_str());
+                ss >> std::get_time(&tm, this->config_.time_format.c_str());
                 if (!ss.fail())
                 {
                     tm.tm_isdst = -1;
@@ -1461,28 +1253,28 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
             }
             return entry;
         }
-        else if (config_.strict_mode)
+        else if (this->config_.strict_mode)
         {
-            if (config_.error_callback)
-                config_.error_callback({line_number, line, "Regex match failed"});
-            return LogEntry();
+            if (this->config_.error_callback)
+                this->config_.error_callback({line_number, line, "Regex match failed"});
+            return ::LogEntry();
         }
     }
 
     std::smatch match;
-    if (std::regex_search(line, match, legacy_timestamp_regex_))
+    if (std::regex_search(line, match, this->legacy_timestamp_regex_))
     {
         entry.timestamp = match[1].str();
         entry.parseTime();
     }
-    if (std::regex_search(line, match, legacy_level_regex_))
+    if (std::regex_search(line, match, this->legacy_level_regex_))
     {
-        entry.level = LogEntry::parseLevel(match[1].str());
+        entry.level = ::LogEntry::parseLevel(match[1].str());
     }
     else
-        entry.level = LogLevel::UNKNOWN;
+        entry.level = ::LogLevel::UNKNOWN;
 
-    if (entry.level != LogLevel::UNKNOWN && !match.empty())
+    if (entry.level != ::LogLevel::UNKNOWN && !match.empty())
     {
         size_t message_start = match.position() + match.length();
         while (message_start < line.length() && (line[message_start] == ' ' || line[message_start] == ':' || line[message_start] == ']'))
@@ -1495,38 +1287,38 @@ LogEntry LogAnalyzer::parseLogLine(const std::string &line, size_t line_number)
     return entry;
 }
 
-bool LogAnalyzer::matchFilter(const LogEntry &entry, const FilterOptions &options) const
+bool LogAnalysis::LogAnalyzer::matchFilter(const ::LogEntry &entry, const LogAnalysis::FilterOptions &options) const
 {
     return options.toPredicate()->test(entry);
 }
 
-void LogAnalyzer::addEnricher(LogEnricher enricher) { enrichers_.push_back(std::move(enricher)); }
-void LogAnalyzer::applyEnrichers(LogEntry &entry)
+void LogAnalysis::LogAnalyzer::addEnricher(LogAnalysis::LogEnricher enricher) { this->enrichers_.push_back(std::move(enricher)); }
+void LogAnalysis::LogAnalyzer::applyEnrichers(::LogEntry &entry)
 {
-    for (auto &e : enrichers_)
+    for (auto &e : this->enrichers_)
         e(entry);
 }
 
-void LogAnalyzer::setFilterOptions(const FilterOptions& options) {
-    std::unique_lock lock(rw_mutex_);
-    currentFilterOptions_ = options;
-    cached_stats_.reset(); // Invalidate cache as filter changes
+void LogAnalysis::LogAnalyzer::setFilterOptions(const LogAnalysis::FilterOptions& options) {
+    std::unique_lock lock(this->rw_mutex_);
+    this->currentFilterOptions_ = options;
+    this->cached_stats_.reset(); // Invalidate cache as filter changes
 }
 
-void LogAnalyzer::clearFilterOptions() {
-    std::unique_lock lock(rw_mutex_);
-    currentFilterOptions_.reset();
-    cached_stats_.reset(); // Invalidate cache
+void LogAnalysis::LogAnalyzer::clearFilterOptions() {
+    std::unique_lock lock(this->rw_mutex_);
+    this->currentFilterOptions_.reset();
+    this->cached_stats_.reset(); // Invalidate cache
 }
 
-std::vector<LogEntry> LogAnalyzer::getFilteredEntriesInternal() const {
-    std::shared_lock lock(rw_mutex_);
-    if (!currentFilterOptions_) {
-        return entries_; // No filter applied, return all entries
+std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntriesInternal() const {
+    std::shared_lock lock(this->rw_mutex_);
+    if (!this->currentFilterOptions_) {
+        return this->entries_; // No filter applied, return all entries
     }
-    std::vector<LogEntry> filtered;
-    std::unique_ptr<LogPredicate> predicate = currentFilterOptions_->toPredicate();
-    for (const auto& entry : entries_) {
+    std::vector<::LogEntry> filtered;
+    std::unique_ptr<LogAnalysis::LogPredicate> predicate = this->currentFilterOptions_->toPredicate();
+    for (const auto& entry : this->entries_) {
         if (predicate->test(entry)) {
             filtered.push_back(entry);
         }
@@ -1534,33 +1326,33 @@ std::vector<LogEntry> LogAnalyzer::getFilteredEntriesInternal() const {
     return filtered;
 }
 
-LogStatistics LogAnalyzer::analyzeAndGetResults()
+LogAnalysis::LogStatistics LogAnalysis::LogAnalyzer::analyzeAndGetResults()
 {
-    std::shared_lock lock(rw_mutex_);
+    std::shared_lock lock(this->rw_mutex_);
     // If cached stats exist AND no filter is applied, return cached stats.
     // If a filter IS applied, force recalculation as cached_stats_ only holds unfiltered stats.
-    if (cached_stats_ && !currentFilterOptions_) {
+    if (cached_stats_ && !this->currentFilterOptions_) {
         return *cached_stats_;
     }
     lock.unlock(); // Release read lock to allow analyze() to take unique lock if needed
 
-    LogStatistics stats;
-    std::vector<LogEntry> filtered_entries = getFilteredEntriesInternal(); // Get filtered entries
+    LogAnalysis::LogStatistics stats;
+    std::vector<::LogEntry> filtered_entries = getFilteredEntriesInternal(); // Get filtered entries
 
     stats.total_entries = filtered_entries.size();
     if (filtered_entries.empty())
     {
         // Cache empty stats only if no filter is applied
-        if (!currentFilterOptions_) {
-            std::unique_lock write_lock(rw_mutex_);
-            cached_stats_ = stats;
+        if (!this->currentFilterOptions_) {
+            std::unique_lock write_lock(this->rw_mutex_);
+            this->cached_stats_ = stats;
         }
         return stats;
     }
 
     std::map<std::string, size_t> error_counts;
     auto min_max_it = std::minmax_element(filtered_entries.begin(), filtered_entries.end(),
-                                          [](const LogEntry &a, const LogEntry &b)
+                                          [](const ::LogEntry &a, const ::LogEntry &b)
                                           {
                                               return a.time_point < b.time_point;
                                           });
@@ -1579,7 +1371,7 @@ LogStatistics LogAnalyzer::analyzeAndGetResults()
     for (const auto &entry : filtered_entries)
     {
         stats.level_counts[entry.level]++;
-        if (entry.level == LogLevel::ERROR || entry.level == LogLevel::CRITICAL)
+        if (entry.level == ::LogLevel::ERROR || entry.level == ::LogLevel::CRITICAL)
         {
             error_counts[entry.message]++;
         }
@@ -1607,34 +1399,34 @@ LogStatistics LogAnalyzer::analyzeAndGetResults()
     }
 
     // Cache results only if no filter is applied
-    if (!currentFilterOptions_) {
-        std::unique_lock write_lock(rw_mutex_);
-        cached_stats_ = std::move(stats);
+    if (!this->currentFilterOptions_) {
+        std::unique_lock write_lock(this->rw_mutex_);
+        this->cached_stats_ = std::move(stats);
         return *cached_stats_;
     }
     return stats;
 }
 
 // Implement `analyze()` and update `getStatistics()` for caching
-void LogAnalyzer::analyze()
+void LogAnalysis::LogAnalyzer::analyze()
 {
     // Simply call analyzeAndGetResults; its side effect is to cache if no filter is applied
     analyzeAndGetResults();
 }
 
-LogStatistics LogAnalyzer::getStatistics() const
+LogAnalysis::LogStatistics LogAnalysis::LogAnalyzer::getStatistics() const
 {
     // Call analyzeAndGetResults to ensure stats are calculated, respecting filters and caching if no filter.
-    return const_cast<LogAnalyzer *>(this)->analyzeAndGetResults();
+    return const_cast<LogAnalysis::LogAnalyzer *>(this)->analyzeAndGetResults();
 }
 
 // --- New aggregation methods ---
-std::map<LogValue, size_t> LogAnalyzer::getFrequencyMap(std::string_view attribute_key) const
+std::map<::LogValue, size_t> LogAnalyzer::getFrequencyMap(std::string_view attribute_key) const
 {
-    std::map<LogValue, size_t> frequency;
+    std::map<::LogValue, size_t> frequency;
     std::string key(attribute_key);
-    std::shared_lock lock(rw_mutex_);
-    for (const auto &entry : entries_)
+    std::shared_lock lock(this->rw_mutex_);
+    for (const auto &entry : this->entries_)
     {
         auto it = entry.attributes.find(key);
         if (it != entry.attributes.end())
@@ -1646,50 +1438,50 @@ std::map<LogValue, size_t> LogAnalyzer::getFrequencyMap(std::string_view attribu
 }
 
 // In-place sort
-void LogAnalyzer::sort(std::function<bool(const LogEntry &, const LogEntry &)> cmp)
+void LogAnalysis::LogAnalyzer::sort(std::function<bool(const ::LogEntry &, const ::LogEntry &)> cmp)
 {
-    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
-    std::sort(entries_.begin(), entries_.end(), cmp);
-    cached_stats_.reset(); // Invalidate cache
+    std::unique_lock lock(this->rw_mutex_); // Unique lock for modifying this->entries_
+    std::sort(this->entries_.begin(), this->entries_.end(), cmp);
+    this->cached_stats_.reset(); // Invalidate cache
 }
 
 // In-place removal
-void LogAnalyzer::removeIf(const LogPredicate &predicate)
+void LogAnalysis::LogAnalyzer::removeIf(const LogAnalysis::LogPredicate &predicate)
 {
-    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
-    auto it = std::remove_if(entries_.begin(), entries_.end(),
-                             [&](const LogEntry &entry)
+    std::unique_lock lock(this->rw_mutex_); // Unique lock for modifying this->entries_
+    auto it = std::remove_if(this->entries_.begin(), this->entries_.end(),
+                             [&](const ::LogEntry &entry)
                              {
                                  return predicate.test(entry);
                              });
-    entries_.erase(it, entries_.end());
-    cached_stats_.reset(); // Invalidate cache
+    this->entries_.erase(it, this->entries_.end());
+    this->cached_stats_.reset(); // Invalidate cache
 }
 
 // Bulk transformation
-void LogAnalyzer::transform(std::function<void(LogEntry &)> transformer)
+void LogAnalysis::LogAnalyzer::transform(std::function<void(::LogEntry &)> transformer)
 {
-    std::unique_lock lock(rw_mutex_); // Unique lock for modifying entries_
-    for (auto &entry : entries_)
+    std::unique_lock lock(this->rw_mutex_); // Unique lock for modifying this->entries_
+    for (auto &entry : this->entries_)
     {
         transformer(entry); // Apply transformer to each entry
     }
-    cached_stats_.reset(); // Invalidate cache
+    this->cached_stats_.reset(); // Invalidate cache
 }
 
 // New generic export methods
-void LogAnalyzer::exportTo(LogExporter &exporter) const
+void LogAnalysis::LogAnalyzer::exportTo(LogAnalysis::LogExporter &exporter) const
 {
-    std::shared_lock lock(rw_mutex_); // Read lock for entries_
-    exporter.exportEntries({entries_.data(), entries_.size()});
+    std::shared_lock lock(this->rw_mutex_); // Read lock for this->entries_
+    exporter.exportEntries({this->entries_.data(), this->entries_.size()});
 }
 
-void LogAnalyzer::exportFilteredTo(LogExporter &exporter, const LogPredicate &predicate) const
+void LogAnalysis::LogAnalyzer::exportFilteredTo(LogAnalysis::LogExporter &exporter, const LogAnalysis::LogPredicate &predicate) const
 {
-    std::vector<LogEntry> filtered_entries;
+    std::vector<::LogEntry> filtered_entries;
     {
-        std::shared_lock lock(rw_mutex_); // Read lock for entries_
-        for (const auto &entry : entries_)
+        std::shared_lock lock(this->rw_mutex_); // Read lock for this->entries_
+        for (const auto &entry : this->entries_)
         {
             if (predicate.test(entry))
             {
@@ -1703,37 +1495,37 @@ void LogAnalyzer::exportFilteredTo(LogExporter &exporter, const LogPredicate &pr
     exporter.exportEntries({filtered_entries.data(), filtered_entries.size()});
 }
 
-void LogAnalyzer::exportStatistics(LogExporter &exporter) const
+void LogAnalysis::LogAnalyzer::exportStatistics(LogAnalysis::LogExporter &exporter) const
 {
     // getStatistics() will ensure analyze() is called and cache is populated
-    LogStatistics stats = getStatistics();
+    LogAnalysis::LogStatistics stats = getStatistics();
     exporter.exportStats(stats);
 }
 
-void LogAnalyzer::printResults(std::ostream& os, OutputFormat format) const {
-    LogStatistics stats = const_cast<LogAnalyzer*>(this)->analyzeAndGetResults(); // Get stats based on current filters
+void LogAnalysis::LogAnalyzer::printResults(std::ostream& os, LogAnalysis::OutputFormat format) const {
+    LogAnalysis::LogStatistics stats = const_cast<LogAnalysis::LogAnalyzer*>(this)->analyzeAndGetResults(); // Get stats based on current filters
 
     switch (format) {
-        case OutputFormat::TEXT: {
-            ConsoleExporter exporter(os);
+        case LogAnalysis::OutputFormat::TEXT: {
+            LogAnalysis::ConsoleExporter exporter(os);
             exporter.exportStats(stats);
             exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
             break;
         }
-        case OutputFormat::JSON: {
-            JsonExporter exporter(os, true); // Pretty JSON
+        case LogAnalysis::OutputFormat::JSON: {
+            LogAnalysis::JsonExporter exporter(os, true); // Pretty JSON
             exporter.exportStats(stats);
             exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
             break;
         }
-        case OutputFormat::CSV: {
-            CsvExporter exporter(os);
+        case LogAnalysis::OutputFormat::CSV: {
+            LogAnalysis::CsvExporter exporter(os);
             exporter.exportStats(stats);
             exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
             break;
         }
-        case OutputFormat::MARKDOWN: {
-            MarkdownExporter exporter(os);
+        case LogAnalysis::OutputFormat::MARKDOWN: {
+            LogAnalysis::MarkdownExporter exporter(os);
             exporter.exportStats(stats);
             exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
             break;
@@ -1741,51 +1533,52 @@ void LogAnalyzer::printResults(std::ostream& os, OutputFormat format) const {
     }
 }
 
-void LogAnalyzer::writeStatistics(std::ostream &out, bool as_json) const
+void LogAnalysis::LogAnalyzer::writeStatistics(std::ostream &out, bool as_json) const
 {
     if (as_json)
     {
-        JsonExporter exporter(out, true); // Assuming pretty JSON for direct JSON output
+        LogAnalysis::JsonExporter exporter(out, true); // Assuming pretty JSON for direct JSON output
         exportStatistics(exporter);
     }
     else
     {
-        ConsoleExporter exporter(out);
+        LogAnalysis::ConsoleExporter exporter(out);
         exportStatistics(exporter);
     }
 }
 
-void LogAnalyzer::writeFilteredEntries(std::ostream &out, const FilterOptions &options, bool as_json) const
+void LogAnalysis::LogAnalyzer::writeFilteredEntries(std::ostream &out, const LogAnalysis::FilterOptions &options, bool as_json) const
 {
     auto pred = options.toPredicate(); // Create predicate from options
     if (as_json)
     {
-        JsonExporter exporter(out, true); // Assuming pretty JSON
+        LogAnalysis::JsonExporter exporter(out, true); // Assuming pretty JSON
         exportFilteredTo(exporter, *pred);
     }
     else
     {
-        ConsoleExporter exporter(out);
+        LogAnalysis::ConsoleExporter exporter(out);
         exportFilteredTo(exporter, *pred);
     }
 }
 
-void LogAnalyzer::printStatistics() const
+void LogAnalysis::LogAnalyzer::printStatistics() const
 {
-    printResults(std::cout, OutputFormat::TEXT);
+    printResults(std::cout, LogAnalysis::OutputFormat::TEXT);
 }
-std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const FilterOptions &options) const { return getFilteredEntries(*options.toPredicate()); }
-std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate &predicate) const
+std::vector<::LogEntry> LogAnalyzer::getFilteredEntries(const LogAnalysis::FilterOptions &options) const { return getFilteredEntries(*options.toPredicate()); }
+std::vector<::LogEntry> LogAnalyzer::getFilteredEntries(const LogAnalysis::LogPredicate &predicate) const
 {
-    std::vector<LogEntry> result;
-    std::shared_lock lock(rw_mutex_);
-    for (const auto &entry : entries_)
+    std::vector<::LogEntry> result;
+    std::shared_lock lock(this->rw_mutex_);
+    for (const auto &entry : this->entries_)
         if (predicate.test(entry))
             result.push_back(entry);
     return result;
 }
 
-std::string LogAnalyzer::levelToString(LogLevel level) const { return std::string(LogEntry::levelToString(level)); }
+std::string LogAnalysis::LogAnalyzer::levelToString(::LogLevel level) const { return std::string(::LogEntry::levelToString(level)); }
 
-} // namespace LogAnalysis // End LogAnalysis namespace for LogAnalyzer
 
+
+} // namespace LogAnalysis
