@@ -36,32 +36,6 @@ struct CommandLineOptions {
     std::vector<std::string> tempPositionalFiles; // For backward compatibility
 };
 
-// Helper to convert string to lower case for case-insensitive comparisons
-std::string toLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
-    return s;
-}
-
-// Function to parse log level string to enum
-::LogLevel parseLogLevel(const std::string& levelStr) {
-    static const std::map<std::string, ::LogLevel> levelMap = {
-        {"debug", ::LogLevel::DEBUG},
-        {"info", ::LogLevel::INFO},
-        {"warn", ::LogLevel::WARNING},
-        {"error", ::LogLevel::ERROR},
-        {"critical", ::LogLevel::CRITICAL}
-    };
-    std::string lowerLevel = toLower(levelStr);
-    auto it = levelMap.find(lowerLevel);
-    if (it != levelMap.end()) {
-        return it->second;
-    }
-    // Default to INFO or throw an error based on desired strictness
-    return ::LogLevel::INFO;
-}
-
-
 // CLI11 will handle argument parsing and help message generation.
 
 int main(int argc, char* argv[]) {
@@ -169,7 +143,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (!opts.tempLogLevelStr.empty()) {
-        opts.filterOptions.level = parseLogLevel(opts.tempLogLevelStr);
+        opts.filterOptions.level = LogEntry::parseLevel(opts.tempLogLevelStr);
     }
 
     if (opts.sources.empty()) {

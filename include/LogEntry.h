@@ -504,7 +504,6 @@ struct std::formatter<LogEntry> {
     }
 };
 
-// Backward compatibility
-LogLevel parseLogLevel(const std::string& level_str);
+
 
 #endif // LOG_ENTRY_H
