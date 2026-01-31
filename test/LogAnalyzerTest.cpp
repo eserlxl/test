@@ -672,7 +672,7 @@ TEST_F(LogAnalyzerTest, AttributeRangeFilter)
         std::regex cpu_regex("CPU=(\\d+)%");
         std::smatch match;
         if (std::regex_search(e.message, match, cpu_regex) && match.size() > 1) {
-            try { e.withAttribute("cpu_usage", std::stoll(match[1].str())); } catch(...) {}
+            try { e.withAttribute("cpu_usage", static_cast<int64_t>(std::stoll(match[1].str()))); } catch(...) {}
         }
         std::regex temp_regex("Temp=([0-9.]+)C");
         if (std::regex_search(e.message, match, temp_regex) && match.size() > 1) {
@@ -750,7 +750,7 @@ TEST_F(LogAnalyzerTest, GetAttributeFrequency)
         std::sregex_iterator next(e.message.begin(), e.message.end(), attr_regex);
         std::sregex_iterator end;
         for (; next != end; ++next) {
-            e.withAttribute(next->str(1), next->str(2));
+            e.withAttribute(static_cast<std::string_view>(next->str(1)), static_cast<std::string_view>(next->str(2)));
         } });
 
     analyzer.loadFile(attrFile);

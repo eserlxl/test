@@ -4,6 +4,7 @@
 #include <format>
 #include <sstream>
 #include <cstring>
+#include <unordered_set>
 
 void testLevelParsing()
 {
@@ -33,13 +34,13 @@ void testTimeParsing()
     entry.timestamp = "2023-10-27 10:00:00";
     assert(entry.parseTime());
     // Checking exact value might be tricky due to timezone, but we can check round trip if we assume local time.
-    std::string generated = entry.generatedTimestampString(false); // No fractional
+    std::string generated = entry.generatedTimestampString(LogEntry::JsonOptions{.precision = LogEntry::JsonOptions::Precision::Seconds, .include_fields = {}, .exclude_fields = {}});
     assert(generated == "2023-10-27 10:00:00");
 
     // Test with fractional
     entry.timestamp = "2023-10-27 10:00:00.123";
     assert(entry.parseTime());
-    generated = entry.generatedTimestampString(true);
+    generated = entry.generatedTimestampString(LogEntry::JsonOptions{.precision = LogEntry::JsonOptions::Precision::Millis, .include_fields = {}, .exclude_fields = {}});
     if (generated != "2023-10-27 10:00:00.123")
     {
         std::cout << "Generated: '" << generated << "', Expected: '2023-10-27 10:00:00.123'" << std::endl;
@@ -381,7 +382,7 @@ void testCloning()
     LogEntry original = LogEntry::create(LogLevel::INFO, "Original Message");
     original.withTag("original_tag")
             .withAttribute("initial_attr", "value1")
-            .withAttribute("attr_to_remove", 123LL);
+            .withAttribute("attr_to_remove", static_cast<int64_t>(123LL));
 
     // Test clonedWithTag (already exists)
     LogEntry clone_with_tag = original.clonedWithTag("new_tag");
@@ -497,7 +498,7 @@ void testToMapRoundTrip()
         .withApp("test-app")
         .withThreadName("main-thread") // New field
         .withTraceContext("trace-xyz", "span-abc")
-        .withSource(__FILE__, __func__, __LINE__); // Populates source_file, func, line
+        .withSource(); // Populates source_file, func, line
 
     // Ensure timestamp is generated
     original.withMetadata();
@@ -775,7 +776,7 @@ void testHasAttributeValue()
 {
     LogEntry entry;
     entry.withAttribute("str_key", "hello");
-    entry.withAttribute("int_key", 123LL);
+    entry.withAttribute("int_key", static_cast<int64_t>(123LL));
     entry.withAttribute("bool_key", true);
 
     assert(entry.hasAttributeValue("str_key", std::string("hello")));
@@ -802,11 +803,15 @@ void testNestedData()
     assert(entry.attributes["list"].isList());
     assert(entry.attributes["obj"].isObject());
 
-    const LogList &l = entry.attributes["list"].asList();
+    auto opt_list_ptr = entry.attributes["list"].asList();
+    assert(opt_list_ptr.has_value());
+    const LogList &l = *opt_list_ptr.value();
     assert(l.size() == 3);
     assert(std::get<std::string>(l[0]) == "a");
 
-    const LogObject &o = entry.attributes["obj"].asObject();
+    auto opt_obj_ptr = entry.attributes["obj"].asObject();
+    assert(opt_obj_ptr.has_value());
+    const LogObject &o = *opt_obj_ptr.value();
     assert(o.at("k1") == LogValue("v1"));
 
     // JSON Round Trip for nested data
@@ -844,7 +849,7 @@ void testJsonOptionsIteration1()
 {
     std::cout << "Starting testJsonOptionsIteration1..." << std::endl;
     LogEntry entry = LogEntry::create(LogLevel::INFO, "Options test");
-    entry.withAttribute("a", 1LL);
+    entry.withAttribute("a", static_cast<int64_t>(1LL));
     entry.withTag("t1");
 
     // Existing tests for exclude_empty and precision
@@ -1174,8 +1179,8 @@ void testGlobalConfigAndProviders() {
 void testNumericConversion()
 {
     LogEntry entry;
-    entry.withAttribute("int_val", 42LL);
-    entry.withAttribute("uint_val", 100ULL);
+    entry.withAttribute("int_val", static_cast<int64_t>(42LL));
+    entry.withAttribute("uint_val", static_cast<uint64_t>(100ULL));
 
     // Exact type
     assert(entry.getAttributeAs<int64_t>("int_val") == 42);
@@ -1477,7 +1482,7 @@ void testHashability() {
     e1.withTag("tagA").withAttribute("attr1", "val1");
 
     LogEntry e2 = LogEntry::create(LogLevel::INFO, "message2");
-    e2.withTag("tagB").withAttribute("attr2", 123LL);
+    e2.withTag("tagB").withAttribute("attr2", static_cast<int64_t>(123LL));
 
     LogEntry e3 = e1; // Should be equal to e1
 

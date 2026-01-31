@@ -25,6 +25,8 @@ namespace { // Anonymous namespace for internal linkage
     std::optional<LogEntry::AppNameProvider> s_appNameProvider;
 }
 
+const LogEntry::JsonOptions LogEntry::defaultJsonOptions;
+
 // Implement static methods for JsonOptions management
 void LogEntry::setDefaultJsonOptions(const JsonOptions& opts) {
     s_defaultJsonOptions = opts;
@@ -268,24 +270,24 @@ std::string LogValue::toString(LogEntryJsonOptions::BinaryEncoding binary_encodi
 
 // Explicit implementation for LogValue comparison operators
 // This is necessary because the default for std::variant does not handle std::shared_ptr content comparison.
-std::strong_ordering LogValue::operator<=>(const LogValue& other) const {
+std::partial_ordering LogValue::operator<=>(const LogValue& other) const {
     if (this->index() != other.index()) {
         return this->index() <=> other.index();
     }
 
-    return std::visit([&](auto&& arg) -> std::strong_ordering {
+    return std::visit([&](auto&& arg) -> std::partial_ordering {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, std::monostate>) {
-            return std::strong_ordering::equal;
+            return std::partial_ordering::equivalent;
         } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
             // Compare contents of LogList
-            if (!arg && !std::get<std::shared_ptr<LogList>>(other)) return std::strong_ordering::equal;
+            if (!arg && !std::get<std::shared_ptr<LogList>>(other)) return std::partial_ordering::equivalent;
             if (!arg) return std::strong_ordering::less;
             if (!std::get<std::shared_ptr<LogList>>(other)) return std::strong_ordering::greater;
             return *arg <=> *std::get<std::shared_ptr<LogList>>(other);
         } else if constexpr (std::is_same_v<T, std::shared_ptr<LogObject>>) {
             // Compare contents of LogObject
-            if (!arg && !std::get<std::shared_ptr<LogObject>>(other)) return std::strong_ordering::equal;
+            if (!arg && !std::get<std::shared_ptr<LogObject>>(other)) return std::partial_ordering::equivalent;
             if (!arg) return std::strong_ordering::less;
             if (!std::get<std::shared_ptr<LogObject>>(other)) return std::strong_ordering::greater;
             return *arg <=> *std::get<std::shared_ptr<LogObject>>(other);
@@ -453,9 +455,9 @@ LogEntry &LogEntry::withMetadata()
     return *this;
 }
 
-LogEntry &LogEntry::withAttribute(std::string key, LogValue value)
+LogEntry &LogEntry::withAttribute(std::string_view key, LogValue value)
 {
-    attributes[std::move(key)] = std::move(value);
+    attributes[std::string(key)] = std::move(value);
     return *this;
 }
 
@@ -474,6 +476,117 @@ LogEntry &LogEntry::withAttributes(const std::map<std::string, LogValue> &attrs)
     {
         attributes[key] = value;
     }
+    return *this;
+}
+
+// New: withAttribute overloads for common types
+LogEntry& LogEntry::withAttribute(std::string_view key, bool value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, int64_t value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, uint64_t value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, double value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, std::string_view value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, const char* value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, std::chrono::system_clock::time_point value) {
+    attributes[std::string(key)] = LogValue(value);
+    return *this;
+}
+
+
+LogEntry& LogEntry::withAttribute(std::string_view key, LogList value) {
+    attributes[std::string(key)] = LogValue(std::move(value));
+    return *this;
+}
+
+LogEntry& LogEntry::withAttribute(std::string_view key, LogObject value) {
+    attributes[std::string(key)] = LogValue(std::move(value));
+    return *this;
+}
+
+LogEntry& LogEntry::withThreadName(std::string_view name) {
+    thread_name = name;
+    return *this;
+}
+
+LogEntry& LogEntry::merge(const LogEntry& other, bool overwrite_attributes, bool merge_tags) {
+    if (overwrite_attributes) {
+        for (const auto& [key, val] : other.attributes) {
+            attributes[key] = val;
+        }
+    } else {
+        for (const auto& [key, val] : other.attributes) {
+            if (attributes.find(key) == attributes.end()) {
+                attributes[key] = val;
+            }
+        }
+    }
+
+    if (merge_tags) {
+        tags.insert(other.tags.begin(), other.tags.end());
+    }
+
+    // Merge other primitive fields if they are empty in current entry and not empty in other
+    if (level == LogLevel::UNKNOWN) level = other.level;
+    if (message.empty()) message = other.message;
+    if (timestamp.empty()) {
+        timestamp = other.timestamp;
+        time_point = other.time_point;
+    }
+    if (process_id == 0) process_id = other.process_id;
+    if (host_name.empty()) host_name = other.host_name;
+    if (app_name.empty()) app_name = other.app_name;
+    if (source_file.empty()) source_file = other.source_file;
+    if (source_function.empty()) source_function = other.source_function;
+    if (source_line == 0) source_line = other.source_line;
+    if (thread_id.empty()) thread_id = other.thread_id;
+    if (thread_name.empty()) thread_name = other.thread_name;
+    if (trace_id.empty()) trace_id = other.trace_id;
+    if (span_id.empty()) span_id = other.span_id;
+
+    return *this;
+}
+
+bool LogEntry::isValid() const noexcept {
+    return !message.empty() && level != LogLevel::UNKNOWN && !timestamp.empty();
+}
+
+int LogEntry::getSeverityValue() const {
+    return static_cast<int>(level);
+}
+
+// Callstack Capture (Placeholder, needs actual implementation)
+LogEntry& LogEntry::captureCallStack(std::string_view attribute_key, [[maybe_unused]] size_t skip_frames, [[maybe_unused]] size_t max_frames) {
+    // This is a placeholder. Actual implementation would involve platform-specific APIs
+    // like DbgHelp on Windows or backtrace/execinfo on Linux.
+    // For now, we just add a dummy attribute.
+    LogList stack_frames;
+    stack_frames.push_back("Frame 0: FunctionA at line 100");
+    stack_frames.push_back("Frame 1: FunctionB at line 200");
+    // Add more dummy frames or actual captured frames
+    withAttribute(attribute_key, std::move(stack_frames));
     return *this;
 }
 
@@ -941,8 +1054,7 @@ std::optional<std::chrono::system_clock::time_point> LogEntry::parseTimestamp(
 
 std::optional<std::chrono::system_clock::time_point> LogEntry::parseTimestamp(
     std::string_view timestamp_str,
-    LogEntry::JsonOptions::TimestampFormat format_type,
-    std::string_view custom_format
+    LogEntry::JsonOptions::TimestampFormat format_type
 ) {
     if (format_type == JsonOptions::TimestampFormat::ISO8601) {
         return parseISO8601(timestamp_str);
@@ -1445,19 +1557,19 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
         if (key == "level")
         {
             if (auto s_ptr = value.asString()) {
-                entry.level = parseLevel(*s_ptr); // Corrected: *s_ptr is const std::string&
+                entry.level = parseLevel(**s_ptr);
             }
         }
         else if (key == "message")
         {
             if (auto s_ptr = value.asString()) {
-                entry.message = *s_ptr; // Corrected: *s_ptr is const std::string&
+                entry.message = **s_ptr; // Corrected: *s_ptr is const std::string&
             }
         }
         else if (key == "timestamp")
         {
             if (auto s_ptr = value.asString()) {
-                entry.timestamp = *s_ptr; // Corrected: *s_ptr is const std::string&
+                entry.timestamp = **s_ptr; // Corrected: *s_ptr is const std::string&
                 entry.parseTime(); // Populate time_point
             }
             // If it's a numeric timestamp (UnixMillis), parse it as well
@@ -1479,32 +1591,32 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
         else if (key == "host_name")
         {
             if (auto s_ptr = value.asString())
-                entry.host_name = *s_ptr; // Corrected
+                entry.host_name = **s_ptr; // Corrected
         }
         else if (key == "app_name")
         {
             if (auto s_ptr = value.asString())
-                entry.app_name = *s_ptr; // Corrected
+                entry.app_name = **s_ptr; // Corrected
         }
         else if (key == "thread_id")
         {
             if (auto s_ptr = value.asString())
-                entry.thread_id = *s_ptr; // Corrected
+                entry.thread_id = **s_ptr; // Corrected
         }
         else if (key == "thread_name")
         {
             if (auto s_ptr = value.asString())
-                entry.thread_name = *s_ptr; // Corrected
+                entry.thread_name = **s_ptr; // Corrected
         }
         else if (key == "trace_id")
         {
             if (auto s_ptr = value.asString())
-                entry.trace_id = *s_ptr; // Corrected
+                entry.trace_id = **s_ptr; // Corrected
         }
         else if (key == "span_id")
         {
             if (auto s_ptr = value.asString())
-                entry.span_id = *s_ptr; // Corrected
+                entry.span_id = **s_ptr; // Corrected
         }
         else if (key == "source")
         {
@@ -1512,11 +1624,11 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
                 const auto& sourceObj = **obj_ptr; // Dereference optional and pointer
                 if (auto file_val = sourceObj.find("file"); file_val != sourceObj.end()) {
                     if (auto s_ptr = file_val->second.asString())
-                        entry.source_file = *s_ptr; // Corrected
+                        entry.source_file = **s_ptr; // Corrected
                 }
                 if (auto func_val = sourceObj.find("function"); func_val != sourceObj.end()) {
                     if (auto s_ptr = func_val->second.asString())
-                        entry.source_function = *s_ptr; // Corrected
+                        entry.source_function = **s_ptr; // Corrected
                 }
                 if (auto line_val = sourceObj.find("line"); line_val != sourceObj.end()) {
                     if (auto i = line_val->second.asInt64())
@@ -1531,7 +1643,7 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
                 {
                     if (auto s_ptr = v.asString())
                     {
-                        entry.tags.insert(*s_ptr); // Corrected
+                        entry.tags.insert(**s_ptr); // Corrected
                     }
                 }
             }
@@ -1560,7 +1672,7 @@ std::map<std::string, LogValue> LogEntry::toMap() const
     std::map<std::string, LogValue> m;
 
     // Timestamp
-    m["timestamp"] = timestamp.empty() ? generatedTimestampString(JsonOptions{.precision = JsonOptions::Precision::Millis}) : LogValue(timestamp); // Use LogValue constructor
+    m["timestamp"] = timestamp.empty() ? generatedTimestampString(JsonOptions{.precision = JsonOptions::Precision::Millis, .include_fields = {}, .exclude_fields = {}}) : LogValue(timestamp); // Use LogValue constructor
     // Level
     m["level"] = std::string(levelToString(level));
     // Message
@@ -1994,42 +2106,6 @@ namespace std {
     }
 } // namespace std
 
-// Base64 helper
-static std::string base64Encode(const std::vector<uint8_t>& data) {
-    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string ret;
-    int i = 0;
-    int j = 0;
-    uint8_t char_array_3[3];
-    uint8_t char_array_4[4];
-
-    for (auto b : data) {
-        char_array_3[i++] = b;
-        if (i == 3) {
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-
-            for (i = 0; (i < 4); i++) ret += base64_chars[char_array_4[i]];
-            i = 0;
-        }
-    }
-
-    if (i) {
-        for (j = i; j < 3; j++) char_array_3[j] = '\0';
-
-        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-        char_array_4[3] = char_array_3[2] & 0x3f;
-
-        for (j = 0; (j < i + 1); j++) ret += base64_chars[char_array_4[j]];
-        while ((i++ < 3)) ret += '=';
-    }
-
-    return ret;
-}
 
 struct JsonVisitor
 {
@@ -2131,9 +2207,7 @@ struct JsonVisitor
     }
 };
 
-std::string LogEntry::toJson() const {
-    return toJson(getDefaultJsonOptions());
-}
+
 
 std::string LogEntry::toJson(const JsonOptions &options) const
 {
@@ -2291,64 +2365,7 @@ bool LogEntry::operator==(const LogEntry &other) const
     return (*this <=> other) == 0;
 }
 
-bool LogEntry::isValid() const noexcept
-{
-    // Check 1: Basic requirements
-    if (level == LogLevel::UNKNOWN || message.empty()) {
-        return false;
-    }
 
-    // Check 2: Timestamp format and consistency
-    if (!timestamp.empty()) {
-        // Attempt to parse the timestamp string to verify its format
-        // Create a temporary LogEntry to avoid modifying 'this'
-        LogEntry tempEntry;
-        tempEntry.timestamp = this->timestamp;
-        if (!tempEntry.parseTime()) { // parseTime populates tempEntry.time_point
-            return false; // Timestamp string format is invalid
-        }
-
-        // Consistency check: If this->time_point is also set, ensure it matches
-        // Allow for a small delta if time_point was set by external system, but for now exact match is fine.
-        if (this->time_point.time_since_epoch().count() != 0 &&
-            this->time_point != tempEntry.time_point) {
-            return false; // time_point and timestamp string are inconsistent
-        }
-    } else {
-        // If timestamp string is empty, but time_point is set, it's okay (auto-generated timestamp will be used if needed).
-        // If both are empty, it's also okay, time_point will be auto-generated on withMetadata or toJson.
-    }
-
-
-    // Check 3: source_line consistency
-    if ((!source_file.empty() || !source_function.empty()) && source_line <= 0) {
-        return false; // Source file/function provided, but line number is invalid (<=0)
-    }
-
-    // All checks passed
-    return true;
-}
-
-int LogEntry::getSeverityValue() const
-{
-    switch (level)
-    {
-    case LogLevel::DEBUG:
-        return 7;
-    case LogLevel::INFO:
-        return 6;
-    case LogLevel::WARNING:
-        return 4;
-    case LogLevel::ERROR:
-        return 3;
-    case LogLevel::CRITICAL:
-        return 2;
-    default:
-        return 0; // Emergency/Unknown? treating UNKNOWN as 0 might be misleading but fits the return type.
-                  // Actually, RFC 5424: 0 is Emergency.
-                  // Let's assume Unknown is not standard.
-    }
-}
 
 std::ostream &operator<<(std::ostream &os, const LogEntry &entry)
 {

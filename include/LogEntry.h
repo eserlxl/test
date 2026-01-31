@@ -140,7 +140,7 @@ struct LogValue : LogValueBase {
     std::string toString(LogEntryJsonOptions::BinaryEncoding binary_encoding = LogEntryJsonOptions::BinaryEncoding::Hex) const;
 
     // New: Comparison operators
-    std::strong_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
+    std::partial_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
     bool operator==(const LogValue& other) const; // Remove default to implement manually
 }; // Closing brace for LogValue
 
@@ -205,8 +205,7 @@ struct LogEntry {
     );
     static std::optional<std::chrono::system_clock::time_point> parseTimestamp(
         std::string_view timestamp_str,
-        JsonOptions::TimestampFormat format_type, // Use JsonOptions directly
-        std::string_view custom_format = ""
+        JsonOptions::TimestampFormat format_type // Use JsonOptions directly
     );
 
 
@@ -239,7 +238,7 @@ struct LogEntry {
     LogEntry& withLevel(LogLevel l);
     LogEntry& withMessage(std::string_view msg);
     LogEntry& withMetadata(); // Captures PID, Host, App, Thread, and Time if not set
-    LogEntry& withAttribute(std::string key, LogValue value); // Existing
+    LogEntry& withAttribute(std::string_view key, LogValue value); // Existing
 
     // New: withAttribute overloads for common types
     LogEntry& withAttribute(std::string_view key, bool value);
@@ -250,7 +249,10 @@ struct LogEntry {
     LogEntry& withAttribute(std::string_view key, const char* value);
     LogEntry& withAttribute(std::string_view key, std::chrono::system_clock::time_point value);
     template <typename Rep, typename Period>
-    LogEntry& withAttribute(std::string_view key, std::chrono::duration<Rep, Period> value);
+    LogEntry& withAttribute(std::string_view key, std::chrono::duration<Rep, Period> value) {
+        attributes[std::string(key)] = LogValue(value);
+        return *this;
+    }
     LogEntry& withAttribute(std::string_view key, LogList value); // Takes ownership
     LogEntry& withAttribute(std::string_view key, LogObject value); // Takes ownership
     LogEntry& withAttributes(std::initializer_list<std::pair<const std::string, LogValue>> attrs); // Iteration 1
@@ -358,7 +360,7 @@ struct LogEntry {
 
     static void setDefaultJsonOptions(const JsonOptions& opts);
     static const JsonOptions& getDefaultJsonOptions();
-    std::string toJson() const; // Overload to use default options
+
 
     std::string toJson(const JsonOptions& options = defaultJsonOptions) const;
 

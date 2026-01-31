@@ -475,7 +475,7 @@ void JsonExporter::exportEntries(std::span<const LogEntry> entries)
     out_ << "[\n";
     for (size_t i = 0; i < entries.size(); ++i)
     {
-        out_ << entries[i].toJson({.pretty = pretty_});
+        out_ << entries[i].toJson({.pretty = pretty_, .include_fields = {}, .exclude_fields = {}});
         if (i < entries.size() - 1)
             out_ << ",\n";
     }
