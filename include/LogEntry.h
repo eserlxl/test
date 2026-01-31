@@ -133,8 +133,24 @@ struct LogValue : LogValueBase {
     std::optional<std::chrono::nanoseconds> asDuration() const;
 
     // New: Direct Access (throws on mismatch, like std::get)
-    template<typename T> const T& get() const { return std::get<T>(static_cast<const LogValueBase&>(*this)); }
-    template<typename T> T& get() { return std::get<T>(static_cast<LogValueBase&>(*this)); }
+    template<typename T> const T& to() const { return std::get<T>(static_cast<const LogValueBase&>(*this)); }
+    template<typename T> T& to() { return std::get<T>(static_cast<LogValueBase&>(*this)); }
+
+    // New: Safe access with a fallback
+    template<typename T> T get_or_default(const T& default_value) const {
+        if (auto p = get_if<T>()) {
+            return *p;
+        }
+        return default_value;
+    }
+
+    // New: operator[] for LogList (by index)
+    LogValue& operator[](size_t index);
+    const LogValue& operator[](size_t index) const;
+
+    // New: operator[] for LogObject (by key)
+    LogValue& operator[](std::string_view key);
+    const LogValue& operator[](std::string_view key) const;
 
     // New: Optional Access (returns nullptr on mismatch, like std::get_if)
     template<typename T> const T* get_if() const noexcept { return std::get_if<T>(static_cast<const LogValueBase*>(this)); }
@@ -147,6 +163,22 @@ struct LogValue : LogValueBase {
     // New: Comparison operators
     std::partial_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
     bool operator==(const LogValue& other) const; // Remove default to implement manually
+
+    // New: Safe access with a fallback
+    template<typename T> T get_or_default(const T& default_value) const {
+        if (auto p = get_if<T>()) {
+            return *p;
+        }
+        return default_value;
+    }
+
+    // New: operator[] for LogList (by index)
+    LogValue& operator[](size_t index);
+    const LogValue& operator[](size_t index) const;
+
+    // New: operator[] for LogObject (by key)
+    LogValue& operator[](std::string_view key);
+    const LogValue& operator[](std::string_view key) const;
 }; // Closing brace for LogValue
 
 // Global function or friend method within LogValue
@@ -158,6 +190,36 @@ namespace std {
         size_t operator()(const LogValue& lv) const noexcept; // Added noexcept
     };
 } // namespace std
+
+namespace LogEntryDetail {
+    // Default toLogValue for types not explicitly handled
+    template<typename T>
+    LogValue toLogValue(T&& arg) {
+        using ArgumentType = std::decay_t<T>;
+        if constexpr (std::is_convertible_v<ArgumentType, std::string_view>) {
+            return LogValue(static_cast<std::string_view>(arg));
+        } else if constexpr (std::is_integral_v<ArgumentType> && !std::is_same_v<bool, ArgumentType>) {
+            if constexpr (std::is_signed_v<ArgumentType>) {
+                return LogValue(static_cast<int64_t>(arg));
+            } else {
+                return LogValue(static_cast<uint64_t>(arg));
+            }
+        } else if constexpr (std::is_floating_point_v<ArgumentType>) {
+            return LogValue(static_cast<double>(arg));
+        } else if constexpr (std::is_same_v<bool, ArgumentType>) {
+            return LogValue(static_cast<bool>(arg));
+        } else {
+            // Fallback for types not directly convertible: use stringstream
+            std::ostringstream oss;
+            oss << arg;
+            return LogValue(oss.str());
+        }
+    }
+
+    // Overloads for LogList/LogObject to prevent double-wrapping shared_ptr
+    inline LogValue toLogValue(LogList list) { return LogValue(std::move(list)); }
+    inline LogValue toLogValue(LogObject obj) { return LogValue(std::move(obj)); }
+} // namespace LogEntryDetail
 
 // Forward declarations for internal implementation details of LogContext.
 struct ContextFrame {
@@ -338,29 +400,7 @@ struct LogEntry {
         // Extract positional arguments as attributes (arg0, arg1, ...)
         int arg_idx = 0;
         // This fold expression will execute the lambda for each argument
-        ( (this->attributes["arg" + std::to_string(arg_idx++)] = [](auto&& arg) -> LogValue {
-            // Attempt to convert argument to LogValue.
-            // This is a simplified conversion; a real implementation might need more specific handling
-            // for different types (e.g., custom types, enums).
-            if constexpr (std::is_convertible_v<decltype(arg), std::string_view>) {
-                return LogValue(static_cast<std::string_view>(arg));
-            } else if constexpr (std::is_integral_v<decltype(arg)> && !std::is_same_v<bool, std::decay_t<decltype(arg)>>) {
-                if constexpr (std::is_signed_v<decltype(arg)>) {
-                    return LogValue(static_cast<int64_t>(arg));
-                } else {
-                    return LogValue(static_cast<uint64_t>(arg));
-                }
-            } else if constexpr (std::is_floating_point_v<decltype(arg)>) {
-                return LogValue(static_cast<double>(arg));
-            } else if constexpr (std::is_same_v<bool, std::decay_t<decltype(arg)>>) {
-                return LogValue(static_cast<bool>(arg));
-            } else {
-                // Fallback for types not directly convertible: use stringstream
-                std::ostringstream oss;
-                oss << arg;
-                return LogValue(oss.str());
-            }
-        }(std::forward<Args>(args))), ...);
+        ( (this->attributes["arg" + std::to_string(arg_idx++)] = LogEntryDetail::toLogValue(std::forward<Args>(args))), ...);
 
         return *this;
     }
