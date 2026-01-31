@@ -30,19 +30,17 @@ public:
     enum class SourceType { FILE, DIRECTORY, STD_IN };
 
     // Constructor for file paths
-    explicit LogSource(const std::string& path, SourceType type = SourceType::FILE, bool recursive = false);
+    explicit LogSource(const std::string& path, SourceType type = SourceType::FILE);
 
     // Get all individual log file paths to process
     std::vector<std::string> getFilePaths() const;
 
     SourceType getType() const { return type_; }
     const std::string& getPath() const { return path_; }
-    bool isRecursive() const { return recursive_; }
 
 private:
     std::string path_;
     SourceType type_;
-    bool recursive_;
     // Internal list of resolved file paths
     mutable std::vector<std::string> resolved_file_paths_; 
     void resolveFilePaths() const; // Helper to populate resolved_file_paths_
@@ -108,7 +106,11 @@ struct AnalysisConfig {
     // Flag to enable/disable message template generation and counting.
     bool enable_message_template_counts = false;
 
-    // Future: Could include custom aggregators, anomaly detection parameters, etc.
+    // Iteration 14 Additions
+    size_t top_n_results = 0; // 0 for no limit
+    std::vector<std::string> group_by_fields;
+    std::string sort_by_field;
+    bool sort_descending = true; // true for descending, false for ascending
 };
 
 struct ParseError {
@@ -163,6 +165,10 @@ struct ParsingConfig {
     // Iteration 1: Custom parsers
     // Map of group name to a function that converts the string match to a LogValue
     std::map<std::string, std::function<LogValue(std::string_view)>> custom_parsers;
+
+    // NEW Iteration 14: Custom parsing rules
+    std::string custom_regex_pattern;
+    std::string custom_timestamp_format;
 
     // Returns true if the configuration is valid (regex compiles, indices are within range)
     bool validate() const;
@@ -271,6 +277,16 @@ namespace Filters {
     std::expected<std::unique_ptr<LogPredicate>, std::string> fromQuery(std::string_view query_string);
 }
 
+// NEW Iteration 14: Retrieval Options for 'entries' and 'tail' commands
+struct RetrievalOptions {
+    size_t limit = 0;
+    size_t tail_count = 0;
+    std::string sort_by_field;
+    bool sort_descending = false; // default to ascending for entries
+    bool follow = true; // For tail command, true means continuous output
+    std::vector<std::string> fields_to_export; // New: fields to display
+};
+
 struct FilterOptions {
     std::optional<LogLevel> level;
     std::optional<std::string> keyword;
@@ -339,7 +355,7 @@ class LogExporter {
 public:
     virtual ~LogExporter() = default;
     virtual void exportStats(const LogStatistics& stats) = 0;
-    virtual void exportEntries(std::span<const LogEntry> entries) = 0;
+    virtual void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) = 0;
 };
 
 class JsonExporter : public LogExporter {
@@ -348,7 +364,7 @@ class JsonExporter : public LogExporter {
 public:
     explicit JsonExporter(std::ostream& out, bool pretty = false) : out_(out), pretty_(pretty) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
 };
 
 class CsvExporter : public LogExporter {
@@ -356,7 +372,7 @@ class CsvExporter : public LogExporter {
 public:
     explicit CsvExporter(std::ostream& out) : out_(out) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
 };
 
 class MarkdownExporter : public LogExporter {
@@ -364,7 +380,7 @@ class MarkdownExporter : public LogExporter {
 public:
     explicit MarkdownExporter(std::ostream& out) : out_(out) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
 };
 
 class ConsoleExporter : public LogExporter {
@@ -374,7 +390,7 @@ public:
     explicit ConsoleExporter(std::ostream& out, bool use_color = true) 
         : out_(out), use_color_(use_color) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
 };
 
 // --- NEW Iteration 8: Log Anonymization / Redaction ---
@@ -509,7 +525,7 @@ public:
     );
 
     // New: Load from multiple LogSource objects
-    std::expected<LoadResult, std::string> loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, ProgressCallback progress = nullptr);
+    std::expected<LoadResult, std::string> loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, bool recursive_global_flag = false, ProgressCallback progress = nullptr);
 
     // Legacy Loading
     bool loadLogFile(const std::string& filepath);
@@ -528,8 +544,11 @@ public:
         std::function<bool() > stop_predicate = nullptr
     );
 
-    std::generator<LogEntry> tailFileStream(
-        const std::filesystem::path& filepath,
+    void tailFileStream(
+        const LogSource& source, 
+        const FilterOptions& filter, 
+        const RetrievalOptions& retrieval, 
+        LogExporter& exporter, 
         std::function<void(const ParseError&)> error_callback = nullptr
     );
 
@@ -647,9 +666,8 @@ public:
     // Legacy Output (will be deprecated or changed to call printResults)
     [[deprecated("Use printResults() instead for structured output control.")]]
     void printStatistics() const;
+    [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const FilterOptions& filter, const RetrievalOptions& retrieval) const;
     [[nodiscard]] std::vector<LogEntry> getFilteredEntries() const;
-    [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const FilterOptions& options) const;
-    [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const LogPredicate& predicate) const;
 
 private:
     std::vector<LogEntry> entries_;

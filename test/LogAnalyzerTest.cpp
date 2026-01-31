@@ -234,7 +234,7 @@ TEST_F(LogAnalyzerTest, LevelRangeFilter)
     FilterOptions options;
     options.level = LogLevel::WARNING; // Should include WARNING, ERROR, CRITICAL
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 3);
 }
 
@@ -246,7 +246,7 @@ TEST_F(LogAnalyzerTest, MultiLevelSelect)
     FilterOptions options;
     options.levels = {LogLevel::INFO, LogLevel::CRITICAL};
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 2);
     EXPECT_EQ(filtered[0].level, LogLevel::INFO);
     EXPECT_EQ(filtered[1].level, LogLevel::CRITICAL);
@@ -260,10 +260,10 @@ TEST_F(LogAnalyzerTest, KeywordSearch)
     FilterOptions options;
     options.keyword = "Connection";
     options.case_sensitive = true;
-    EXPECT_EQ(analyzer.getFilteredEntries(options).size(), 1); // "Connection failed"
+    EXPECT_EQ(analyzer.getFilteredEntries(options, {}).size(), 1); // "Connection failed"
 
     options.case_sensitive = false;
-    EXPECT_EQ(analyzer.getFilteredEntries(options).size(), 2); // "Connection failed", "Retrying connection"
+    EXPECT_EQ(analyzer.getFilteredEntries(options, {}).size(), 2); // "Connection failed", "Retrying connection"
 }
 
 TEST_F(LogAnalyzerTest, PreciseTimeFiltering)
@@ -284,7 +284,7 @@ TEST_F(LogAnalyzerTest, PreciseTimeFiltering)
     options.start_tp = parseTime("2023-10-27 10:01:00");
     options.end_tp = parseTime("2023-10-27 10:02:00");
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 2);
     EXPECT_EQ(filtered[0].timestamp, "2023-10-27 10:01:00");
     EXPECT_EQ(filtered[1].timestamp, "2023-10-27 10:02:00");
@@ -309,11 +309,11 @@ TEST_F(LogAnalyzerTest, MetadataFiltering)
 
     FilterOptions options;
     options.thread_id = "T2";
-    EXPECT_EQ(analyzer.getFilteredEntries(options).size(), 1);
+    EXPECT_EQ(analyzer.getFilteredEntries(options, {}).size(), 1);
 
     options = FilterOptions();
     options.source_file = "main.cpp";
-    EXPECT_EQ(analyzer.getFilteredEntries(options).size(), 1);
+    EXPECT_EQ(analyzer.getFilteredEntries(options, {}).size(), 1);
 }
 
 TEST_F(LogAnalyzerTest, RegexFiltering)
@@ -323,7 +323,7 @@ TEST_F(LogAnalyzerTest, RegexFiltering)
 
     FilterOptions options;
     options.message_regex_pattern = "failed|crash";
-    EXPECT_EQ(analyzer.getFilteredEntries(options).size(), 2);
+    EXPECT_EQ(analyzer.getFilteredEntries(options, {}).size(), 2);
 }
 
 TEST_F(LogAnalyzerTest, InvertMatch)
@@ -335,7 +335,7 @@ TEST_F(LogAnalyzerTest, InvertMatch)
     options.level = LogLevel::ERROR; // Matches ERROR, CRITICAL
     options.invert_match = true;     // Should match INFO, DEBUG, WARNING
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 3);
 }
 
@@ -350,7 +350,7 @@ TEST_F(LogAnalyzerTest, ComplexFilter)
     options.case_sensitive = false;
 
     // Intersection: "Connection failed" (ERROR), "Retrying connection" (WARNING)
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 2);
 }
 
@@ -512,13 +512,13 @@ TEST_F(LogAnalyzerTest, AttributeFiltering)
     FilterOptions options;
     options.attribute_matches["user"] = "alice";
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 2); // e1 and e3
     EXPECT_EQ(filtered[0].message, "M1");
     EXPECT_EQ(filtered[1].message, "M3");
 
     options.attribute_matches["role"] = "admin";
-    filtered = analyzer.getFilteredEntries(options);
+    filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 1); // e3
     EXPECT_EQ(filtered[0].message, "M3");
 }
@@ -537,11 +537,11 @@ TEST_F(LogAnalyzerTest, TagFiltering)
     FilterOptions options;
     options.required_tags.insert("network");
 
-    auto filtered = analyzer.getFilteredEntries(options);
+    auto filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 2); // e1 and e3
 
     options.required_tags.insert("critical");
-    filtered = analyzer.getFilteredEntries(options);
+    filtered = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered.size(), 1); // e3
 }
 
@@ -683,18 +683,22 @@ TEST_F(LogAnalyzerTest, AttributeRangeFilter)
 
     analyzer.loadFile(attrFile);
 
-    // Filter for CPU usage > 90
-    auto predicate = Filters::AttributeRange("cpu_usage", LogValue(int64_t(90)), LogValue(int64_t(100)));
-    auto filtered = analyzer.getFilteredEntries(*predicate);
+    // Filter for CPU usage >= 90 and <= 100
+    FilterOptions optionsCpu;
+    optionsCpu.attribute_filter_conditions["cpu_usage"].emplace_back(LogValue(int64_t(90)), NumericComparisonOp::GTE);
+    optionsCpu.attribute_filter_conditions["cpu_usage"].emplace_back(LogValue(int64_t(100)), NumericComparisonOp::LTE);
+    auto filtered = analyzer.getFilteredEntries(optionsCpu, {});
     EXPECT_EQ(filtered.size(), 2); // 95% and 100%
-    EXPECT_EQ(filtered[0].getAttributeAs<int64_t>("cpu_usage"), 95);
-    EXPECT_EQ(filtered[1].getAttributeAs<int64_t>("cpu_usage"), 100);
+    EXPECT_EQ(filtered[0].getAttributeAs<int64_t>("cpu_usage").value(), 95);
+    EXPECT_EQ(filtered[1].getAttributeAs<int64_t>("cpu_usage").value(), 100);
 
-    // Filter for temperature between 20 and 30
-    auto pred_temp = Filters::AttributeRange("temperature", LogValue(20.0), LogValue(30.0));
-    auto filtered_temp = analyzer.getFilteredEntries(*pred_temp);
+    // Filter for temperature between 20.0 and 30.0
+    FilterOptions optionsTemp;
+    optionsTemp.attribute_filter_conditions["temperature"].emplace_back(LogValue(20.0), NumericComparisonOp::GTE);
+    optionsTemp.attribute_filter_conditions["temperature"].emplace_back(LogValue(30.0), NumericComparisonOp::LTE);
+    auto filtered_temp = analyzer.getFilteredEntries(optionsTemp, {});
     EXPECT_EQ(filtered_temp.size(), 1);
-    EXPECT_EQ(filtered_temp[0].getAttributeAs<double>("temperature"), 25.5);
+    EXPECT_EQ(filtered_temp[0].getAttributeAs<double>("temperature").value(), 25.5);
 }
 
 TEST_F(LogAnalyzerTest, SinceFilter)
@@ -704,8 +708,9 @@ TEST_F(LogAnalyzerTest, SinceFilter)
     // We will test it with a very large duration (200,000 hours ~ 22 years) to ensure
     // the 2023 timestamps are captured regardless of the current date (up to ~2045).
     analyzer.loadFile(testLogFile);
-    auto pred_since = Filters::Since(std::chrono::hours(200000));
-    auto filtered_since = analyzer.getFilteredEntries(*pred_since);
+    FilterOptions options;
+    options.since = std::chrono::hours(200000);
+    auto filtered_since = analyzer.getFilteredEntries(options, {});
     EXPECT_EQ(filtered_since.size(), 5);
 }
 
@@ -715,14 +720,18 @@ TEST_F(LogAnalyzerTest, AnyKeywordFilter)
     analyzer.loadFile(testLogFile); // Contains "System", "Connection", "Debugging", "Retrying", "crash"
 
     // Search for "System" or "Connection" (case-sensitive)
-    auto predicate = Filters::AnyKeyword({"System", "Connection"}, true);
-    auto filtered = analyzer.getFilteredEntries(*predicate);
+    FilterOptions optionsCs;
+    optionsCs.any_keywords = {"System", "Connection"};
+    optionsCs.case_sensitive = true;
+    auto filtered = analyzer.getFilteredEntries(optionsCs, {});
     // "System started", "Connection failed", "System crash imminent"
     EXPECT_EQ(filtered.size(), 3);
 
     // Search for "system" or "connection" (case-insensitive)
-    auto predicate_ci = Filters::AnyKeyword({"system", "connection"}, false);
-    auto filtered_ci = analyzer.getFilteredEntries(*predicate_ci);
+    FilterOptions optionsCi;
+    optionsCi.any_keywords = {"system", "connection"};
+    optionsCi.case_sensitive = false;
+    auto filtered_ci = analyzer.getFilteredEntries(optionsCi, {});
     // "System started", "Connection failed", "Retrying connection", "System crash imminent"
     EXPECT_EQ(filtered_ci.size(), 4);
 }

@@ -928,48 +928,23 @@ std::unique_ptr<LogAnalysis::LogPredicate> LogAnalysis::FilterOptions::toPredica
 }
 
 // --- LogSource Implementation ---
-LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type, bool recursive)
-    : path_(path), type_(type), recursive_(recursive) {
-    if (type_ == SourceType::DIRECTORY) {
-        resolveFilePaths();
-    } else { // SourceType::FILE or SourceType::STD_IN
-        resolved_file_paths_.push_back(path_);
+LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type)
+    : path_(path), type_(type) {
+    if (type_ != SourceType::STD_IN) { // For files and directories, initialize resolved_file_paths_
+        resolved_file_paths_.push_back(path_); // Add the initial path
     }
 }
 
 std::vector<std::string> LogAnalysis::LogSource::getFilePaths() const {
-    if (type_ == SourceType::DIRECTORY && resolved_file_paths_.empty()) {
-        const_cast<LogSource*>(this)->resolveFilePaths(); // Resolve if not already done
-    }
-    return resolved_file_paths_;
+    return resolved_file_paths_; // Return the paths initialized or resolved via loadLogSources
 }
 
 void LogAnalysis::LogSource::resolveFilePaths() const {
-    resolved_file_paths_.clear(); // Clear previous paths
-    if (type_ == SourceType::FILE || type_ == SourceType::STD_IN) {
-        resolved_file_paths_.push_back(path_);
-        return;
-    }
-
-    if (!std::filesystem::exists(path_) || !std::filesystem::is_directory(path_)) {
-        // Handle error or throw exception for invalid directory
-        std::cerr << "Warning: Directory not found or not a directory: " << path_ << std::endl;
-        return;
-    }
-
-    if (recursive_) {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(path_)) {
-            if (std::filesystem::is_regular_file(entry.status())) {
-                resolved_file_paths_.push_back(entry.path().string());
-            }
-        }
-    } else {
-        for (const auto& entry : std::filesystem::directory_iterator(path_)) {
-            if (std::filesystem::is_regular_file(entry.status())) {
-                resolved_file_paths_.push_back(entry.path().string());
-            }
-        }
-    }
+    // This method is now effectively deprecated or will be called by LogAnalyzer::loadLogSources
+    // which will pass the recursive flag. This particular implementation in LogSource is removed.
+    // The actual resolution based on recursion will happen in LogAnalyzer.
+    // For now, this becomes a no-op or a placeholder for future specific logic if needed.
+    // The responsibility shifts to LogAnalyzer.
 }
 // --- Exporters Implementation ---
 
@@ -990,12 +965,20 @@ void LogAnalysis::JsonExporter::exportStats(const LogStatistics &stats)
     out_ << "\n  }\n}\n";
 }
 
-void LogAnalysis::JsonExporter::exportEntries(std::span<const ::LogEntry> entries)
+void LogAnalysis::JsonExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
 {
     out_ << "[\n";
     for (size_t i = 0; i < entries.size(); ++i)
     {
-        out_ << entries[i].toJson({.pretty = pretty_, .include_fields = {}, .exclude_fields = {}});
+        LogEntry::JsonOptions json_opts = {.pretty = pretty_};
+        if (!fields_to_export.empty()) {
+            json_opts.include_fields = std::set<std::string>(fields_to_export.begin(), fields_to_export.end());
+            // If specific fields are requested, don't include source, thread, tracing by default
+            json_opts.include_source = false;
+            json_opts.include_thread = false;
+            json_opts.include_tracing = false;
+        }
+        out_ << entries[i].toJson(json_opts);
         if (i < entries.size() - 1)
             out_ << ",\n";
     }
@@ -1009,23 +992,75 @@ void LogAnalysis::CsvExporter::exportStats(const LogStatistics &stats)
     out_ << "duration_seconds," << stats.duration.count() << "\n";
 }
 
-void LogAnalysis::CsvExporter::exportEntries(std::span<const ::LogEntry> entries)
+void LogAnalysis::CsvExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
 {
-    out_ << "Timestamp,Level,Message,ThreadId\n";
+    // Determine headers
+    std::vector<std::string> headers = fields_to_export;
+    if (headers.empty()) {
+        // Default CSV headers
+        headers = {"Timestamp", "Level", "Message", "ThreadId"};
+    }
+
+    // Print headers
+    for (size_t i = 0; i < headers.size(); ++i) {
+        out_ << "\"" << headers[i] << "\"";
+        if (i < headers.size() - 1) out_ << ",";
+    }
+    out_ << "\n";
+
+    // Print entries
     for (const auto &entry : entries)
     {
-        out_ << "\"" << entry.timestamp << "\",";
-        out_ << "\"" << ::LogEntry::levelToString(entry.level) << "\",";
-        // Escape quotes in message
-        std::string msg = entry.message;
-        size_t pos = 0;
-        while ((pos = msg.find("\"", pos)) != std::string::npos)
-        {
-            msg.replace(pos, 1, "\"\"");
-            pos += 2;
+        for (size_t i = 0; i < headers.size(); ++i) {
+            std::string value;
+            const std::string& header = headers[i];
+
+            if (header == "Timestamp") {
+                value = entry.timestamp;
+            } else if (header == "Level") {
+                value = std::string(::LogEntry::levelToString(entry.level));
+            } else if (header == "Message") {
+                value = entry.message;
+            } else if (header == "ThreadId") {
+                value = entry.thread_id;
+            } else if (header == "raw_line") {
+                value = entry.raw_line;
+            } else if (header == "source_file") {
+                value = entry.source_file;
+            } else if (header == "source_line") {
+                value = std::to_string(entry.source_line);
+            } else if (header == "process_id") {
+                value = std::to_string(entry.process_id);
+            } else if (header == "host_name") {
+                value = entry.host_name;
+            } else if (header == "app_name") {
+                value = entry.app_name;
+            } else if (header == "event_id") {
+                value = entry.event_id;
+            } else if (header == "trace_id") {
+                value = entry.trace_id;
+            } else if (header == "span_id") {
+                value = entry.span_id;
+            }
+            else {
+                // Check attributes
+                auto attr = entry.getAttribute(header);
+                if (attr) {
+                    value = attr->toString();
+                }
+            }
+
+            // Escape quotes in value
+            size_t pos = 0;
+            while ((pos = value.find("\"", pos)) != std::string::npos)
+            {
+                value.replace(pos, 1, "\"\"");
+                pos += 2;
+            }
+            out_ << "\"" << value << "\"";
+            if (i < headers.size() - 1) out_ << ",";
         }
-        out_ << "\"" << msg << "\",";
-        out_ << "\"" << entry.thread_id << "\"\n";
+        out_ << "\n";
     }
 }
 
@@ -1046,13 +1081,75 @@ void LogAnalysis::MarkdownExporter::exportStats(const LogStatistics &stats)
     }
 }
 
-void LogAnalysis::MarkdownExporter::exportEntries(std::span<const ::LogEntry> entries)
+void LogAnalysis::MarkdownExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
 {
-    out_ << "| Timestamp | Level | Message |\n";
-    out_ << "| :--- | :--- | :--- |\n";
+    // Determine headers
+    std::vector<std::string> headers = fields_to_export;
+    if (headers.empty()) {
+        // Default Markdown headers
+        headers = {"Timestamp", "Level", "Message"};
+    }
+
+    // Print headers
+    for (const auto& header : headers) {
+        out_ << "| " << header << " ";
+    }
+    out_ << "|\n";
+
+    // Print separator
+    for (const auto& header : headers) {
+        out_ << "| :--- ";
+    }
+    out_ << "|\n";
+
+    // Print entries
     for (const auto &entry : entries)
     {
-        out_ << "| " << entry.timestamp << " | " << ::LogEntry::levelToString(entry.level) << " | " << entry.message << " |\n";
+        for (const auto& header : headers) {
+            std::string value;
+            if (header == "Timestamp") {
+                value = entry.timestamp;
+            } else if (header == "Level") {
+                value = std::string(::LogEntry::levelToString(entry.level));
+            } else if (header == "Message") {
+                value = entry.message;
+            } else if (header == "raw_line") {
+                value = entry.raw_line;
+            } else if (header == "thread_id") {
+                value = entry.thread_id;
+            } else if (header == "source_file") {
+                value = entry.source_file;
+            } else if (header == "source_line") {
+                value = std::to_string(entry.source_line);
+            } else if (header == "process_id") {
+                value = std::to_string(entry.process_id);
+            } else if (header == "host_name") {
+                value = entry.host_name;
+            } else if (header == "app_name") {
+                value = entry.app_name;
+            } else if (header == "event_id") {
+                value = entry.event_id;
+            } else if (header == "trace_id") {
+                value = entry.trace_id;
+            } else if (header == "span_id") {
+                value = entry.span_id;
+            }
+            else {
+                // Check attributes
+                auto attr = entry.getAttribute(header);
+                if (attr) {
+                    value = attr->toString();
+                }
+            }
+            // Basic markdown escape for pipe characters in values
+            size_t pos = 0;
+            while ((pos = value.find("|", pos)) != std::string::npos) {
+                value.replace(pos, 1, "\\|");
+                pos += 2;
+            }
+            out_ << "| " << value << " ";
+        }
+        out_ << "|\n";
     }
 }
 
@@ -1074,10 +1171,11 @@ void LogAnalysis::ConsoleExporter::exportStats(const LogStatistics &stats)
     }
 }
 
-void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> entries)
+void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
 {
     for (const auto &entry : entries)
     {
+        std::ostringstream oss;
         if (use_color_)
         {
             std::string color = "";
@@ -1099,12 +1197,62 @@ void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> ent
             default:
                 break;
             }
-            out_ << "\033[90m[" << entry.timestamp << "]\033[0m " << color << "[" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "]\033[0m " << entry.message << "\n";
+            oss << "\033[90m[" << entry.timestamp << "]\033[0m " << color << "[" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "]\033[0m ";
         }
         else
         {
-            out_ << "[" << entry.timestamp << "] [" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "] " << entry.message << "\n";
+            oss << "[" << entry.timestamp << "] [" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "] ";
         }
+
+        if (fields_to_export.empty()) {
+            oss << entry.message << "\n";
+        } else {
+            bool first_field = true;
+            for (const auto& field : fields_to_export) {
+                if (!first_field) {
+                    oss << " | ";
+                }
+                if (field == "timestamp") {
+                    oss << entry.timestamp;
+                } else if (field == "level") {
+                    oss << LogEntry::levelToString(entry.level);
+                } else if (field == "message") {
+                    oss << entry.message;
+                } else if (field == "raw_line") {
+                    oss << entry.raw_line;
+                } else if (field == "thread_id") {
+                    oss << entry.thread_id;
+                } else if (field == "source_file") {
+                    oss << entry.source_file;
+                } else if (field == "source_line") {
+                    oss << entry.source_line;
+                } else if (field == "process_id") {
+                    oss << entry.process_id;
+                } else if (field == "host_name") {
+                    oss << entry.host_name;
+                } else if (field == "app_name") {
+                    oss << entry.app_name;
+                } else if (field == "event_id") {
+                    oss << entry.event_id;
+                } else if (field == "trace_id") {
+                    oss << entry.trace_id;
+                } else if (field == "span_id") {
+                    oss << entry.span_id;
+                }
+                else {
+                    // Check attributes
+                    auto attr = entry.getAttribute(field);
+                    if (attr) {
+                        oss << attr->toString();
+                    } else {
+                        oss << "N/A"; // Field not found
+                    }
+                }
+                first_field = false;
+            }
+            oss << "\n";
+        }
+        out_ << oss.str();
     }
 }
 
@@ -1195,57 +1343,46 @@ void LogAnalysis::LogAnalyzer::setParsingConfig(ParsingConfig config, bool repar
     // Need to protect access to entries_ and config_
     std::unique_lock lock(*this->rw_mutex_ptr_);
     this->config_ = std::move(config);
-    std::string processed_pattern = this->config_.line_pattern; // Use new config
     this->named_group_indices_.clear();
 
-    if (!processed_pattern.empty())
+    // Use custom_regex_pattern if provided, otherwise fallback to line_pattern
+    std::string effective_line_pattern = this->config_.custom_regex_pattern.empty() ?
+                                         this->config_.line_pattern :
+                                         this->config_.custom_regex_pattern;
+
+    if (!effective_line_pattern.empty())
     {
         std::string final_pattern;
         int current_group = 0;
-        for (size_t i = 0; i < processed_pattern.size(); ++i)
-        {
-            if (processed_pattern[i] == '(')
-            {
-                if (i + 1 < processed_pattern.size() && processed_pattern[i + 1] == '?')
-                {
-                    if (i + 2 < processed_pattern.size() && processed_pattern[i + 2] == ':')
-                    {
-                        final_pattern += "(?:";
-                        i += 2;
-                    }
-                    else if (i + 2 < processed_pattern.size() && processed_pattern[i + 2] == '<')
-                    {
-                        current_group++;
-                        size_t end_bracket = processed_pattern.find('>', i + 3);
-                        if (end_bracket != std::string::npos)
-                        {
-                            std::string name = processed_pattern.substr(i + 3, end_bracket - (i + 3));
-                            this->named_group_indices_[name] = current_group;
-                            final_pattern += '(';
-                            i = end_bracket;
-                        }
-                        else
-                        {
-                            final_pattern += '(';
-                        }
-                    }
-                    else
-                    {
-                        current_group++;
-                        final_pattern += '(';
-                    }
-                }
-                else
-                {
-                    current_group++;
-                    final_pattern += '(';
-                }
-            }
-            else
-            {
-                final_pattern += processed_pattern[i];
+        // Logic to extract named capture groups and construct the regex
+        // This part needs to correctly handle `effective_line_pattern`
+        // For simplicity, we assume named groups are already handled in fromRegexWithNamedGroups
+        // or that the provided custom_regex_pattern directly supports the indexing approach below.
+        // If a custom regex is given, we need to re-parse it for named groups or rely on index.
+        // For now, re-use the existing logic that assumes groups are extracted.
+
+        std::regex named_group_finder("\\(\\?<([a-zA-Z_][a-zA-Z0-9_]*)>");
+        std::sregex_iterator words_begin = std::sregex_iterator(effective_line_pattern.begin(), effective_line_pattern.end(), named_group_finder);
+        std::sregex_iterator words_end;
+
+        int group_counter = 0; // To track 1-based index for unnamed groups
+        for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
+            std::smatch match = *i;
+            std::string name = match[1].str();
+            // Find the position of this named group in the original pattern
+            size_t pos = effective_line_pattern.find(match.str(), 0);
+            if (pos != std::string::npos) {
+                // Count unnamed groups before this one
+                std::regex unnamed_group_finder("\\((?!\\?)"); // Matches ( but not (?: or (?<
+                std::sregex_iterator unnamed_begin = std::sregex_iterator(effective_line_pattern.begin(), effective_line_pattern.begin() + pos, unnamed_group_finder);
+                std::sregex_iterator unnamed_end;
+                int current_unnamed_groups = std::distance(unnamed_begin, unnamed_end);
+                this->named_group_indices_[name] = current_unnamed_groups + 1; // +1 for 1-based index
             }
         }
+
+        // Reconstruct final_pattern for std::regex
+        final_pattern = effective_line_pattern; // Assuming CLI11 or direct input for custom_regex_pattern is valid
 
         try
         {
@@ -1253,7 +1390,7 @@ void LogAnalysis::LogAnalyzer::setParsingConfig(ParsingConfig config, bool repar
         }
         catch (const std::regex_error &e)
         {
-            std::cerr << "Invalid regex pattern: " << e.what() << " (processed from " << this->config_.line_pattern << ")" << std::endl;
+            std::cerr << "Invalid regex pattern: " << e.what() << " (processed from " << effective_line_pattern << ")" << std::endl;
         }
     }
 
@@ -1267,6 +1404,11 @@ void LogAnalysis::LogAnalyzer::setParsingConfig(ParsingConfig config, bool repar
         {
             std::cerr << "Invalid entry start pattern: " << e.what() << std::endl;
         }
+    }
+
+    // Use custom_timestamp_format if provided, otherwise fallback to time_format
+    if (!this->config_.custom_timestamp_format.empty()) {
+        this->config_.time_format = this->config_.custom_timestamp_format;
     }
 
     if (reparseExisting) {
@@ -1539,7 +1681,7 @@ std::future<LogAnalysis::LoadResult> LogAnalysis::LogAnalyzer::loadParallel(std:
     });
 }
 
-std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, LogAnalysis::ProgressCallback progress) {
+std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, bool recursive_global_flag, LogAnalysis::ProgressCallback progress) {
     LogAnalysis::LoadResult total_result = {0, 0};
     std::vector<::LogEntry> collected_entries; // Temporarily store entries from all sources
 
@@ -1550,8 +1692,31 @@ std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::lo
             continue;
         }
 
-        auto file_paths = source.getFilePaths();
-        for (const auto& filepath_str : file_paths) {
+        std::vector<std::string> file_paths_to_load;
+        if (source.getType() == LogAnalysis::LogSource::SourceType::DIRECTORY) {
+            std::filesystem::path dir_path(source.getPath());
+            if (!std::filesystem::exists(dir_path) || !std::filesystem::is_directory(dir_path)) {
+                return std::unexpected("Directory not found or not a directory: " + source.getPath());
+            }
+
+            if (recursive_global_flag) {
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(dir_path)) {
+                    if (std::filesystem::is_regular_file(entry.status())) {
+                        file_paths_to_load.push_back(entry.path().string());
+                    }
+                }
+            } else {
+                for (const auto& entry : std::filesystem::directory_iterator(dir_path)) {
+                    if (std::filesystem::is_regular_file(entry.status())) {
+                        file_paths_to_load.push_back(entry.path().string());
+                    }
+                }
+            }
+        } else { // SourceType::FILE
+            file_paths_to_load.push_back(source.getPath());
+        }
+
+        for (const auto& filepath_str : file_paths_to_load) {
             std::filesystem::path filepath(filepath_str);
             auto result_pair = loadFileWithStats(filepath, progress); // Use refactored loadFileWithStats
             if (result_pair) {
@@ -1708,68 +1873,155 @@ std::future<void> LogAnalysis::LogAnalyzer::tailFile(
         } });
 }
 
-std::generator<::LogEntry> LogAnalysis::LogAnalyzer::tailFileStream(
-    const std::filesystem::path &filepath,
-    std::function<void(const ParseError &)> error_callback)
+void LogAnalysis::LogAnalyzer::tailFileStream(
+    const LogSource& source,
+    const FilterOptions& filter,
+    const RetrievalOptions& retrieval,
+    LogExporter& exporter,
+    std::function<void(const ParseError&)> error_callback)
 {
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        co_return;
+    if (source.getType() != LogSource::SourceType::FILE) {
+        if (error_callback) error_callback({0, "", "Tail command requires a file source."});
+        return;
+    }
 
-    file.seekg(0, std::ios::end);
-    auto last_pos = file.tellg();
+    std::filesystem::path filepath(source.getPath());
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        if (error_callback) error_callback({0, "", "Could not open file for tailing: " + filepath.string()});
+        return;
+    }
+
+    // Determine starting position:
+    // If tail_count is set, read the last N lines.
+    // Otherwise, start at the end of the file for follow mode.
+    std::vector<LogEntry> initial_entries;
+    std::string line;
     std::string entry_buffer;
     size_t line_count = 0;
 
-    while (true)
-    {
-        if (!std::filesystem::exists(filepath))
-            break;
-        file.clear();
-        auto current_size = std::filesystem::file_size(filepath);
+    auto predicate = filter.toPredicate();
 
-        if (current_size > static_cast<size_t>(last_pos))
-        {
+    if (retrieval.tail_count > 0 && !retrieval.follow) { // --lines N functionality (read last N lines and exit)
+        file.seekg(0, std::ios::end);
+        long long current_pos = file.tellg();
+        long long start_pos = current_pos;
+
+        // Try to find the Nth newline from the end
+        size_t newlines_found = 0;
+        while (current_pos > 0 && newlines_found <= retrieval.tail_count) {
+            current_pos--;
+            file.seekg(current_pos);
+            char c;
+            file.get(c);
+            if (c == '\n') {
+                newlines_found++;
+            }
+        }
+        if (newlines_found > retrieval.tail_count) {
+            file.seekg(current_pos + 2); // Go past the Nth newline
+        } else {
+            file.seekg(0); // If less than N lines, start from beginning
+        }
+        
+        while (std::getline(file, line)) {
+            line_count++;
+            bool is_new = true;
+            if (this->entry_start_regex_) is_new = std::regex_search(line, *this->entry_start_regex_);
+
+            if (is_new && !entry_buffer.empty()) {
+                ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
+                this->applyEnrichers(entry);
+                this->applyAnonymizers(entry);
+                if (predicate->test(entry)) {
+                    initial_entries.push_back(std::move(entry));
+                }
+                entry_buffer = line;
+            } else {
+                if (!entry_buffer.empty()) entry_buffer += "\n";
+                entry_buffer += line;
+            }
+        }
+        if (!entry_buffer.empty()) {
+            ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
+            this->applyEnrichers(entry);
+            this->applyAnonymizers(entry);
+            if (predicate->test(entry)) {
+                initial_entries.push_back(std::move(entry));
+            }
+        }
+        
+        // Export collected entries for --lines N
+        exporter.exportEntries({initial_entries.data(), initial_entries.size()}, retrieval.fields_to_export);
+        return; // Exit after printing N lines
+    }
+
+    // Continuous tailing (follow mode)
+    file.seekg(0, std::ios::end); // Start at the end of the file
+    auto last_pos = file.tellg();
+    entry_buffer.clear();
+    line_count = 0;
+
+    while (!this->stop_tailing_ptr_->load()) { // Loop until stop_tailing_ptr_ is set to true
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Polling interval
+
+        if (!std::filesystem::exists(filepath)) {
+            if (error_callback) error_callback({0, "", "Tailing: File not found: " + filepath.string() + ". Retrying..."});
+            continue;
+        }
+
+        file.clear(); // Clear any error flags
+        std::error_code ec;
+        auto current_size = std::filesystem::file_size(filepath, ec);
+        if (ec) {
+             if (error_callback) error_callback({0, "", "Tailing: Failed to get file size: " + ec.message()});
+             continue;
+        }
+
+
+        if (current_size < static_cast<size_t>(last_pos)) {
+            // File was truncated or reset (e.g., log rotation)
+            if (error_callback) error_callback({0, "", "Tailing: File truncated or rotated. Re-reading from beginning."});
+            file.seekg(0, std::ios::beg);
+            last_pos = 0;
+            entry_buffer.clear(); // Clear buffer to avoid parsing old partial entries
+        } else if (current_size > static_cast<size_t>(last_pos)) {
+            // New content available
             file.seekg(last_pos);
-            std::string line;
-            while (std::getline(file, line))
-            {
+            std::string current_line;
+            while (std::getline(file, current_line)) {
                 line_count++;
                 bool is_new = true;
-                if (this->entry_start_regex_)
-                    is_new = std::regex_search(line, *this->entry_start_regex_);
+                if (this->entry_start_regex_) is_new = std::regex_search(current_line, *this->entry_start_regex_);
 
-                if (is_new && !entry_buffer.empty())
-                {
+                if (is_new && !entry_buffer.empty()) {
                     ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
                     this->applyEnrichers(entry);
                     this->applyAnonymizers(entry);
-                    co_yield entry;
-                    entry_buffer = line;
-                }
-                else
-                {
-                    if (!entry_buffer.empty())
-                        entry_buffer += "\n";
-                    entry_buffer += line;
+                    if (predicate->test(entry)) {
+                        std::vector<LogEntry> single_entry_vec;
+                        single_entry_vec.push_back(std::move(entry));
+                        exporter.exportEntries({single_entry_vec.data(), single_entry_vec.size()}, retrieval.fields_to_export);
+                    }
+                    entry_buffer = current_line;
+                } else {
+                    if (!entry_buffer.empty()) entry_buffer += "\n";
+                    entry_buffer += current_line;
                 }
             }
             last_pos = file.tellg();
         }
-        else if (current_size < static_cast<size_t>(last_pos))
-        {
-            last_pos = 0;
-            file.seekg(0);
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    if (!entry_buffer.empty())
-    {
+    // Process any remaining buffer after tailing stops
+    if (!entry_buffer.empty()) {
         ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
         this->applyEnrichers(entry);
         this->applyAnonymizers(entry);
-        co_yield entry;
+        if (predicate->test(entry)) {
+            std::vector<LogEntry> single_entry_vec;
+            single_entry_vec.push_back(std::move(entry));
+            exporter.exportEntries({single_entry_vec.data(), single_entry_vec.size()}, retrieval.fields_to_export);
+        }
     }
 }
 
@@ -2193,18 +2445,85 @@ std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntriesInternal() c
 LogAnalysis::LogStatistics LogAnalysis::LogAnalyzer::analyzeAndGetResults()
 {
     std::shared_lock lock(*this->rw_mutex_ptr_);
-    // If cached stats exist AND no filter is applied, return cached stats.
-    // If a filter IS applied, force recalculation as cached_stats_ only holds unfiltered stats.
-    if (cached_stats_ && !this->currentFilterOptions_ && !this->currentFilterPredicate_) {
+    // If cached stats exist AND no filter is applied AND no analysis config, return cached stats.
+    if (cached_stats_ && !this->currentFilterOptions_ && !this->currentFilterPredicate_ && !this->currentAnalysisConfig_) {
         return *cached_stats_;
     }
     lock.unlock(); // Release read lock to allow analyze() to take unique lock if needed
 
     // Compute statistics on filtered entries
-    LogAnalysis::LogStatistics stats = calculateStatistics(getFilteredEntriesInternal());
+    std::vector<LogEntry> filtered_entries = getFilteredEntriesInternal();
+    LogAnalysis::LogStatistics stats = calculateStatistics(filtered_entries);
 
-    // Cache results only if no filter is applied
-    if (!this->currentFilterOptions_ && !this->currentFilterPredicate_) {
+    // Apply AnalysisConfig enhancements
+    if (this->currentAnalysisConfig_) {
+        const auto& analysisConfig = *this->currentAnalysisConfig_;
+
+        // --- Grouping ---
+        if (!analysisConfig.group_by_fields.empty()) {
+            // For now, let's just make a simple grouped count.
+            // A more robust implementation would involve creating nested maps or a custom GroupedResult struct.
+            // Example: group by level, then by message template
+            // std::map<std::string, std::map<std::string, size_t>> grouped_counts;
+
+            // Simplified approach for immediate implementation:
+            // Group by the first field, for now.
+            // This needs to be expanded for multi-field grouping.
+            if (!analysisConfig.group_by_fields.empty()) {
+                std::map<LogValue, size_t> grouped_counts;
+                for (const auto& entry : filtered_entries) {
+                    // Get the value of the field to group by
+                    std::optional<LogValue> group_value;
+                    if (analysisConfig.group_by_fields[0] == "level") {
+                        group_value = LogValue(LogEntry::levelToString(entry.level));
+                    } else if (analysisConfig.group_by_fields[0] == "message") {
+                        group_value = LogValue(entry.message);
+                    } else if (analysisConfig.group_by_fields[0] == "timestamp") {
+                        group_value = LogValue(entry.timestamp);
+                    } else {
+                        group_value = entry.getAttribute(analysisConfig.group_by_fields[0]);
+                    }
+
+                    if (group_value) {
+                        grouped_counts[*group_value]++;
+                    }
+                }
+                // Store grouped counts in a generic way or dedicated field in LogStatistics
+                // For now, let's just output them as part of top_string_attribute_occurrences if they are strings
+                if (grouped_counts.size() > 0) {
+                    std::vector<std::pair<std::string, size_t>> temp_top_n;
+                    for(const auto& pair : grouped_counts) {
+                        temp_top_n.push_back({pair.first.toString(), pair.second});
+                    }
+                    stats.top_string_attribute_occurrences["grouped_results"] = temp_top_n;
+                }
+            }
+        }
+
+        // --- Sorting and Top-N (for general stats or specific grouped results) ---
+        // If sorting and top-n are applied to a specific grouped result, that needs to be handled
+        // within the grouping logic. If applied to overall stats, then it's different.
+        // For simplicity here, let's assume `top_n_results` and `sort_by_field`
+        // apply to the `top_errors` or `top_string_attribute_occurrences`.
+
+        // Example: Apply to top_errors
+        if (!stats.top_errors.empty() && !analysisConfig.sort_by_field.empty()) {
+            std::sort(stats.top_errors.begin(), stats.top_errors.end(), [&](const auto& a, const auto& b) {
+                if (analysisConfig.sort_by_field == "count") {
+                    return analysisConfig.sort_descending ? (a.second > b.second) : (a.second < b.second);
+                } else if (analysisConfig.sort_by_field == "message") {
+                    return analysisConfig.sort_descending ? (a.first > b.first) : (a.first < b.first);
+                }
+                return false; // Default: no specific sort
+            });
+        }
+        if (analysisConfig.top_n_results > 0 && stats.top_errors.size() > analysisConfig.top_n_results) {
+            stats.top_errors.resize(analysisConfig.top_n_results);
+        }
+    }
+
+    // Cache results only if no filter is applied AND no complex analysis config
+    if (!this->currentFilterOptions_ && !this->currentFilterPredicate_ && !this->currentAnalysisConfig_) {
         std::unique_lock write_lock(*this->rw_mutex_ptr_);
         this->cached_stats_ = std::move(stats);
         return *cached_stats_;
@@ -2576,21 +2895,71 @@ void LogAnalysis::LogAnalyzer::writeFilteredEntries(std::ostream &out, const Log
     }
 }
 
-std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntries() const { return getFilteredEntriesInternal(); }
+std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntries(const FilterOptions& filter, const RetrievalOptions& retrieval) const {
+    std::vector<::LogEntry> filtered;
+    {
+        std::shared_lock lock(*this->rw_mutex_ptr_);
+        auto predicate = filter.toPredicate();
+        for (const auto& entry : this->entries_) {
+            if (predicate->test(entry)) {
+                filtered.push_back(entry);
+            }
+        }
+    }
 
-void LogAnalysis::LogAnalyzer::printStatistics() const
-{
-    printResults(std::cout, LogAnalysis::OutputFormat::TEXT);
+    // Apply sorting
+    if (!retrieval.sort_by_field.empty()) {
+        std::sort(filtered.begin(), filtered.end(), [&](const LogEntry& a, const LogEntry& b) {
+            // Placeholder for sorting logic based on retrieval.sort_by_field
+                        // This will need more robust implementation for different field types
+                        // For now, let's just sort by timestamp as a common case
+                        // int comparison = 0; // Removed, directly return bool
+            
+                        if (retrieval.sort_by_field == "timestamp") {
+                            if (retrieval.sort_descending) return (a.time_point <=> b.time_point) > 0;
+                            return (a.time_point <=> b.time_point) < 0;
+                        } else if (retrieval.sort_by_field == "level") {
+                            if (retrieval.sort_descending) return (a.level <=> b.level) > 0;
+                            return (a.level <=> b.level) < 0;
+                        } else if (retrieval.sort_by_field == "message") {
+                            if (retrieval.sort_descending) return (a.message <=> b.message) > 0;
+                            return (a.message <=> b.message) < 0;
+                        } else {
+                            // Try sorting by attribute if it exists and is comparable
+                            auto attr_a = a.getAttribute(retrieval.sort_by_field);
+                            auto attr_b = b.getAttribute(retrieval.sort_by_field);
+            
+                            if (attr_a && attr_b) {
+                                // LogValue's operator<=> returns std::partial_ordering
+                                auto cmp_result = (*attr_a <=> *attr_b);
+                                if (retrieval.sort_descending) return std::is_gt(cmp_result);
+                                return std::is_lt(cmp_result);
+                            } else if (attr_a) {
+                                return retrieval.sort_descending ? true : false; // If 'a' has attribute and 'b' doesn't, 'a' comes later for ascending, earlier for descending
+                            } else if (attr_b) {
+                                return retrieval.sort_descending ? false : true; // If 'b' has attribute and 'a' doesn't, 'b' comes later for ascending, earlier for descending
+                            }
+                        }
+                        return false; // Default: maintain original order
+        });
+    }
+
+    // Apply tail count
+    if (retrieval.tail_count > 0 && filtered.size() > retrieval.tail_count) {
+        filtered.erase(filtered.begin(), filtered.end() - retrieval.tail_count);
+    }
+    // Apply limit
+    else if (retrieval.limit > 0 && filtered.size() > retrieval.limit) {
+        filtered.resize(retrieval.limit);
+    }
+
+    return filtered;
 }
-std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntries(const LogAnalysis::FilterOptions &options) const { return getFilteredEntries(*options.toPredicate()); }
-std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntries(const LogAnalysis::LogPredicate &predicate) const
-{
-    std::vector<::LogEntry> result;
-    std::shared_lock lock(*this->rw_mutex_ptr_);
-    for (const auto &entry : this->entries_)
-        if (predicate.test(entry))
-            result.push_back(entry);
-    return result;
+
+[[nodiscard]] std::vector<::LogEntry> LogAnalysis::LogAnalyzer::getFilteredEntries() const {
+    // This version uses the internal currentFilterOptions_ or currentFilterPredicate_
+    // and default retrieval options.
+    return getFilteredEntriesInternal();
 }
 
 std::string LogAnalysis::LogAnalyzer::levelToString(::LogLevel level) const { return std::string(::LogEntry::levelToString(level)); }

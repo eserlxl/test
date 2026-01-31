@@ -5,6 +5,10 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <map> // For string to enum mapping
+
+#include "CLI/CLI.hpp" // CLI11 header
+
 #include "LogAnalyzer.h"
 #include "LogEntry.h"
 
@@ -15,16 +19,21 @@ struct CommandLineOptions {
     LogAnalysis::ParsingConfig parsingConfig;
     LogAnalysis::FilterOptions filterOptions;
     LogAnalysis::AnalysisConfig analysisConfig;
+    LogAnalysis::RetrievalOptions retrievalOptions; // New member for entries/tail
     LogAnalysis::OutputFormat outputFormat = LogAnalysis::OutputFormat::TEXT;
     std::string outputPath;
     bool prettyPrint = false;
     bool verbose = false;
-    bool help = false;
-    bool version = false;
     bool recursive = false;
-    size_t limit = 0;
-    size_t tailCount = 0;
-    std::string sortBy;
+    bool noColor = false; // For ConsoleExporter
+    std::string configFilePath; // For config file support
+
+    // Temporary storage for CLI11 binding
+    std::vector<std::string> tempFilePaths;
+    std::vector<std::string> tempDirPaths;
+    bool tempStdin = false;
+    std::string tempLogLevelStr;
+    std::vector<std::string> tempPositionalFiles; // For backward compatibility
 };
 
 // Helper to convert string to lower case for case-insensitive comparisons
@@ -34,161 +43,139 @@ std::string toLower(std::string s) {
     return s;
 }
 
-
-
-void printUsage(const char* programName) {
-    std::cout << "Usage: " << programName << " [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] <INPUT_SOURCES...>" << std::endl;
-    std::cout << "\nCommands:" << std::endl;
-    std::cout << "  analyze (default)  Analyzes logs and prints statistics." << std::endl;
-    std::cout << "  entries            Lists filtered log entries." << std::endl;
-    std::cout << "  tail               Monitors a log file in real-time." << std::endl;
-    std::cout << "\nGlobal Options:" << std::endl;
-    std::cout << "  -h, --help         Show this help message." << std::endl;
-    std::cout << "  --version          Show version information." << std::endl;
-    std::cout << "  -v, --verbose      Enable verbose output." << std::endl;
-    std::cout << "  -o, --output <path> Write output to a file." << std::endl;
-    std::cout << "  --format <fmt>     Output format (text, json, csv, markdown)." << std::endl;
-    std::cout << "  --pretty-print     Enable pretty printing for JSON output." << std::endl;
-    
-    std::cout << "\nInput Source Options:" << std::endl;
-    std::cout << "  -f, --file <path>       Specify a log file. Can be used multiple times." << std::endl;
-    std::cout << "  -d, --directory <path>  Specify a directory of log files." << std::endl;
-    std::cout << "  -r, --recursive         Scan directories recursively." << std::endl;
-    std::cout << "  --stdin                 Read from standard input." << std::endl;
-
-    std::cout << "\nFiltering Options:" << std::endl;
-    std::cout << "  -l, --level <level>    Filter by minimum log level." << std::endl;
-    std::cout << "  -k, --keyword <word>   Filter entries containing a keyword." << std::endl;
-    std::cout << "  --regex-filter <pat>   Filter entries matching a regex." << std::endl;
-    std::cout << "  --start-time <ts>      Filter entries after this timestamp." << std::endl;
-    std::cout << "  --end-time <ts>        Filter entries before this timestamp." << std::endl;
-
-    std::cout << "\nAnalyze Command Options:" << std::endl;
-    std::cout << "  --top-errors <N>       Show top N error messages." << std::endl;
-    
-    std::cout << "\nEntries Command Options:" << std::endl;
-    std::cout << "  --limit <N>            Output the first N matching entries." << std::endl;
-    std::cout << "  --tail <N>             Output the last N matching entries." << std::endl;
-
-    std::cout << "\nExample: " << programName << " analyze -f /var/log/app.log --level ERROR" << std::endl;
+// Function to parse log level string to enum
+::LogLevel parseLogLevel(const std::string& levelStr) {
+    static const std::map<std::string, ::LogLevel> levelMap = {
+        {"debug", ::LogLevel::DEBUG},
+        {"info", ::LogLevel::INFO},
+        {"warn", ::LogLevel::WARNING},
+        {"error", ::LogLevel::ERROR},
+        {"critical", ::LogLevel::CRITICAL}
+    };
+    std::string lowerLevel = toLower(levelStr);
+    auto it = levelMap.find(lowerLevel);
+    if (it != levelMap.end()) {
+        return it->second;
+    }
+    // Default to INFO or throw an error based on desired strictness
+    return ::LogLevel::INFO;
 }
 
-CommandLineOptions parseArguments(int argc, char* argv[]) {
-    CommandLineOptions opts;
-    std::vector<std::string> positionalArgs;
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg[0] == '-') {
-            std::string nextArg = (i + 1 < argc) ? argv[i + 1] : "";
-
-            if (arg == "-h" || arg == "--help") {
-                opts.help = true;
-            } else if (arg == "--version") {
-                opts.version = true;
-            } else if (arg == "-v" || arg == "--verbose") {
-                opts.verbose = true;
-            } else if ((arg == "-o" || arg == "--output") && !nextArg.empty()) {
-                opts.outputPath = nextArg;
-                i++;
-            } else if (arg == "--format" && !nextArg.empty()) {
-                std::string format = toLower(nextArg);
-                if (format == "json") opts.outputFormat = LogAnalysis::OutputFormat::JSON;
-                else if (format == "csv") opts.outputFormat = LogAnalysis::OutputFormat::CSV;
-                else if (format == "markdown") opts.outputFormat = LogAnalysis::OutputFormat::MARKDOWN;
-                else opts.outputFormat = LogAnalysis::OutputFormat::TEXT;
-                i++;
-            } else if (arg == "--pretty-print") {
-                opts.prettyPrint = true;
-            } else if ((arg == "-f" || arg == "--file") && !nextArg.empty()) {
-                opts.sources.emplace_back(nextArg, LogAnalysis::LogSource::SourceType::FILE);
-                i++;
-            } else if ((arg == "-d" || arg == "--directory") && !nextArg.empty()) {
-                opts.sources.emplace_back(nextArg, LogAnalysis::LogSource::SourceType::DIRECTORY, opts.recursive);
-                i++;
-            } else if (arg == "-r" || arg == "--recursive") {
-                opts.recursive = true;
-                // Apply to previously added directories
-                for(auto& source : opts.sources) {
-                    if (source.getType() == LogAnalysis::LogSource::SourceType::DIRECTORY) {
-                        source = LogAnalysis::LogSource(source.getPath(), LogAnalysis::LogSource::SourceType::DIRECTORY, true);
-                    }
-                }
-            } else if (arg == "--stdin") {
-                opts.sources.emplace_back("", LogAnalysis::LogSource::SourceType::STD_IN);
-            } else if ((arg == "-l" || arg == "--level") && !nextArg.empty()) {
-                opts.filterOptions.level = parseLogLevel(nextArg);
-                i++;
-            } else if ((arg == "-k" || arg == "--keyword") && !nextArg.empty()) {
-                opts.filterOptions.keyword = nextArg;
-                i++;
-            } else if (arg == "--regex-filter" && !nextArg.empty()) {
-                opts.filterOptions.message_regex_pattern = nextArg;
-                i++;
-            } else if (arg == "--start-time" && !nextArg.empty()) {
-                opts.filterOptions.start_time = nextArg;
-                i++;
-            } else if (arg == "--end-time" && !nextArg.empty()) {
-                opts.filterOptions.end_time = nextArg;
-                i++;
-            } else if (arg == "--top-errors" && !nextArg.empty()) {
-                // This would be configured in AnalysisConfig. For simplicity, handled post-analysis for now.
-                i++;
-            } else if (arg == "--limit" && !nextArg.empty()) {
-                opts.limit = std::stoul(nextArg);
-                i++;
-            } else if (arg == "--tail" && !nextArg.empty()) {
-                opts.tailCount = std::stoul(nextArg);
-                i++;
-            } else {
-                std::cerr << "Warning: Unknown option '" << arg << "'" << std::endl;
-            }
-        } else {
-            positionalArgs.push_back(arg);
-        }
-    }
-    
-    // Handle positional arguments
-    if (!positionalArgs.empty()) {
-        std::string firstPosArg = toLower(positionalArgs[0]);
-        if (firstPosArg == "analyze" || firstPosArg == "entries" || firstPosArg == "tail") {
-            opts.command = firstPosArg;
-            positionalArgs.erase(positionalArgs.begin());
-        }
-    }
-
-    // Treat remaining positional args as files (for backward compatibility and general use)
-    for (const auto& posArg : positionalArgs) {
-        opts.sources.emplace_back(posArg, LogAnalysis::LogSource::SourceType::FILE);
-    }
-    
-    // Backward compatibility: gemini-cli <logfile>
-    if (argc == 2 && argv[1][0] != '-') {
-        opts.command = "analyze";
-        opts.sources.clear();
-        opts.sources.emplace_back(argv[1], LogAnalysis::LogSource::SourceType::FILE);
-    }
-
-    return opts;
-}
+// CLI11 will handle argument parsing and help message generation.
 
 int main(int argc, char* argv[]) {
-    CommandLineOptions opts = parseArguments(argc, argv);
+    CommandLineOptions opts;
+    CLI::App app{"gemini-cli: A command-line tool for analyzing log files"};
 
-    if (opts.help) {
-        printUsage(argv[0]);
-        return 0;
+    // --- Global Options ---
+    app.set_version_flag("--version", "Log Analyzer CLI Version 1.0");
+
+    app.add_flag("-v,--verbose", opts.verbose, "Enable verbose output.");
+    app.add_option("-o,--output", opts.outputPath, "Write output to a file.");
+    
+    // Output format parsing
+    std::map<std::string, LogAnalysis::OutputFormat> formatMap{
+        {"text", LogAnalysis::OutputFormat::TEXT},
+        {"json", LogAnalysis::OutputFormat::JSON},
+        {"csv", LogAnalysis::OutputFormat::CSV},
+        {"markdown", LogAnalysis::OutputFormat::MARKDOWN}
+    };
+    app.add_option("--format", opts.outputFormat, "Output format (text, json, csv, markdown).")
+        ->transform(CLI::CheckedTransformer(formatMap, CLI::ignore_case))
+        ->default_val("text");
+    app.add_flag("--pretty-print", opts.prettyPrint, "Enable pretty printing for JSON output.");
+    app.add_flag("--no-color", opts.noColor, "Disable colored output for console.");
+    app.add_option("--config", opts.configFilePath, "Path to a configuration file.");
+
+    // --- Input Source Options ---
+    app.add_option("-f,--file", opts.tempFilePaths, "Specify a log file. Can be used multiple times.")->allow_extra_args(false);
+    app.add_option("-d,--directory", opts.tempDirPaths, "Specify a directory of log files.")->allow_extra_args(false);
+    app.add_flag("-r,--recursive", opts.recursive, "Scan directories recursively.");
+    app.add_flag("--stdin", opts.tempStdin, "Read from standard input.");
+
+    // Positional arguments for backward compatibility: gemini-cli <logfile>
+    // This needs to be handled carefully with subcommands.
+    // CLI11 usually prefers explicit options or subcommands for this.
+    // For now, let's assume if no subcommand is given and a positional arg exists, it's a file for 'analyze'.
+    // This will be overridden if 'analyze', 'entries', or 'tail' is explicitly given.
+
+    // --- Filtering Options ---
+    app.add_option("-l,--level", opts.tempLogLevelStr, "Filter by minimum log level (debug, info, warn, error, critical).")
+        ->transform(CLI::CheckedTransformer(std::vector<std::pair<std::string, std::string>>{
+            {"debug", "debug"}, {"info", "info"}, {"warn", "warn"}, {"error", "error"}, {"critical", "critical"}
+        }, CLI::ignore_case))
+        ->option_text("LEVEL");
+    app.add_option("-k,--keyword", opts.filterOptions.keyword, "Filter entries containing a keyword.");
+    app.add_option("--regex-filter", opts.filterOptions.message_regex_pattern, "Filter entries matching a regex.");
+    app.add_option("--start-time", opts.filterOptions.start_time, "Filter entries after this timestamp (YYYY-MM-DD HH:MM:SS).");
+    app.add_option("--end-time", opts.filterOptions.end_time, "Filter entries before this timestamp (YYYY-MM-DD HH:MM:SS).");
+
+    // --- Parsing Config Options ---
+    app.add_option("--parser-regex", opts.parsingConfig.custom_regex_pattern, "Custom regex pattern for parsing log lines.");
+    app.add_option("--parser-timestamp-format", opts.parsingConfig.custom_timestamp_format, "Custom timestamp format string (e.g., \"%Y-%m-%d %H:%M:%S\").");
+
+    // --- Subcommands ---
+    auto analyzeCmd = app.add_subcommand("analyze", "Analyzes logs and prints statistics (default command).");
+    analyzeCmd->fallthrough(); // If no subcommand is given, this one is used
+    analyzeCmd->callback([&](){ opts.command = "analyze"; });
+
+    analyzeCmd->add_option("--top-n", opts.analysisConfig.top_n_results, "Show top N results for grouped analysis.")->default_val(0);
+    analyzeCmd->add_option("--group-by", opts.analysisConfig.group_by_fields, "Group analysis by specified LogEntry field(s) (e.g., level, source, component).")->expected(-1);
+    std::map<std::string, bool> orderMap{{"asc", false}, {"desc", true}}; // false for asc, true for desc
+    analyzeCmd->add_option("--analysis-order", opts.analysisConfig.sort_descending, "Sort order for analysis results (asc, desc).")->transform(CLI::CheckedTransformer(orderMap, CLI::ignore_case))->default_val("desc");
+    analyzeCmd->add_option("--sort-analysis-by", opts.analysisConfig.sort_by_field, "Field to sort analysis results by (e.g., count, level).");
+
+    auto entriesCmd = app.add_subcommand("entries", "Lists filtered log entries.");
+    entriesCmd->callback([&](){ opts.command = "entries"; });
+    entriesCmd->add_option("--limit", opts.retrievalOptions.limit, "Output the first N matching entries.")->default_val(0);
+    entriesCmd->add_option("--tail", opts.retrievalOptions.tail_count, "Output the last N matching entries.")->default_val(0);
+    entriesCmd->add_option("--sort-by", opts.retrievalOptions.sort_by_field, "Sort log entries by a specific field (e.g., timestamp, level, message).");
+    entriesCmd->add_option("--order", opts.retrievalOptions.sort_descending, "Sort order for log entries (asc, desc).")->transform(CLI::CheckedTransformer(orderMap, CLI::ignore_case))->default_val("asc");
+    entriesCmd->add_option("--fields", opts.retrievalOptions.fields_to_export, "Comma-separated list of LogEntry fields to display.")->delimiter(',')->expected(-1);
+
+    auto tailCmd = app.add_subcommand("tail", "Monitors a log file in real-time.");
+    tailCmd->callback([&](){ opts.command = "tail"; });
+    tailCmd->add_option("--lines", opts.retrievalOptions.tail_count, "Output the last N lines and exit (non-follow).")->default_val(0);
+    // --follow is default, so no explicit flag needed for now. If a --no-follow is desired, it can be added.
+    auto noFollowFlag = tailCmd->add_flag("--no-follow", "Do not continuously output new lines (exits after --lines)."); // This flag implies non-follow
+
+    // Backward compatibility for positional logfile
+    app.add_option("files", opts.tempPositionalFiles, "Input log files for backward compatibility.")
+      ->multi_option_policy(CLI::MultiOptionPolicy::TakeAll)
+      ->required(false);
+
+    try {
+        app.parse(argc, argv);
+    } catch (const CLI::ParseError &e) {
+        return app.exit(e);
     }
 
-    if (opts.version) {
-        // In a real app, you'd have a version string.
-        std::cout << "Log Analyzer CLI Version 1.0" << std::endl;
-        return 0;
+    // --- Post-parsing logic to populate opts.sources and other fields ---
+    for (const auto& path : opts.tempFilePaths) {
+        opts.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::FILE);
+    }
+    for (const auto& path : opts.tempDirPaths) {
+        opts.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::DIRECTORY);
+    }
+    if (opts.tempStdin) {
+        opts.sources.emplace_back("", LogAnalysis::LogSource::SourceType::STD_IN);
+    }
+    // Handle positional files (backward compatibility) only if no explicit sources were provided via -f, -d, --stdin
+    if (opts.sources.empty()) {
+        for (const auto& path : opts.tempPositionalFiles) {
+            opts.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::FILE);
+        }
+    }
+
+    if (!opts.tempLogLevelStr.empty()) {
+        opts.filterOptions.level = parseLogLevel(opts.tempLogLevelStr);
     }
 
     if (opts.sources.empty()) {
-        std::cerr << "Error: No input source specified. Use --file, --directory, or --stdin." << std::endl;
-        printUsage(argv[0]);
+        std::cerr << "Error: No input source specified. Use --file, --directory, --stdin, or provide a log file as a positional argument." << std::endl;
+        // Re-display help for clarity
+        std::cout << app.help() << std::endl;
         return 1;
     }
 
@@ -197,7 +184,10 @@ int main(int argc, char* argv[]) {
     analyzer.setFilterOptions(opts.filterOptions);
     analyzer.setAnalysisConfig(opts.analysisConfig);
     
-    auto loadResult = analyzer.loadLogSources(opts.sources);
+    // The loadLogSources method needs to be updated to accept the recursive flag
+    // This will be addressed in the next step when updating LogAnalyzer API
+    auto loadResult = analyzer.loadLogSources(opts.sources, opts.recursive);
+
     if (!loadResult) {
         std::cerr << "Error loading log sources: " << loadResult.error() << std::endl;
         return 1;
@@ -226,25 +216,17 @@ int main(int argc, char* argv[]) {
             break;
         case LogAnalysis::OutputFormat::TEXT:
         default:
-             exporter = std::make_unique<LogAnalysis::ConsoleExporter>(out, /*use_color=*/true);
+             exporter = std::make_unique<LogAnalysis::ConsoleExporter>(out, !opts.noColor); // Use opts.noColor
             break;
     }
 
     if (opts.command == "analyze") {
-        auto stats = analyzer.analyzeAndGetResults();
+        auto stats = analyzer.analyzeAndGetResults(); // This needs to use the updated config
         exporter->exportStats(stats);
 
     } else if (opts.command == "entries") {
-        auto entries = analyzer.getFilteredEntries(); // Deprecated, but simple for this use case
-        
-        if (opts.tailCount > 0 && opts.tailCount <= entries.size()) {
-            entries = std::vector<LogEntry>(entries.end() - opts.tailCount, entries.end());
-        }
-        if (opts.limit > 0 && entries.size() > opts.limit) {
-            entries.resize(opts.limit);
-        }
-
-        exporter->exportEntries(entries);
+        auto entries = analyzer.getFilteredEntries(opts.filterOptions, opts.retrievalOptions);
+        exporter->exportEntries(entries, opts.retrievalOptions.fields_to_export);
 
     } else if (opts.command == "tail") {
         if (opts.sources.size() != 1 || opts.sources[0].getType() != LogAnalysis::LogSource::SourceType::FILE) {
@@ -252,11 +234,20 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // Determine 'follow' behavior:
+        // If --lines is specified, follow is implicitly false (read N lines and exit).
+        // If --no-follow flag is present, follow is false.
+        // Otherwise, follow is true (default continuous tailing).
+        if (opts.retrievalOptions.tail_count > 0) { // --lines N was used
+            opts.retrievalOptions.follow = false;
+        } else if (noFollowFlag->count() > 0) { // --no-follow was used
+            opts.retrievalOptions.follow = false;
+        } else { // Neither --lines nor --no-follow, so default to continuous follow
+            opts.retrievalOptions.follow = true;
+        }
+
         try {
-            for (const auto& entry : analyzer.tailFileStream(opts.sources[0].getPath())) {
-                // For tail, we just print the raw line for now. A formatter could be used.
-                out << entry.raw_line << std::endl;
-            }
+            analyzer.tailFileStream(opts.sources[0], opts.filterOptions, opts.retrievalOptions, *exporter);
         } catch (const std::exception& e) {
             std::cerr << "Error during tail: " << e.what() << std::endl;
             return 1;

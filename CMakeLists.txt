@@ -83,7 +83,7 @@ endif()
 
 # --- Main Executable ---
 add_executable(gemini-cli src/main.cpp)
-target_link_libraries(gemini-cli PRIVATE gemini-core)
+target_link_libraries(gemini-cli PRIVATE gemini-core CLI11::CLI11)
 
 # Apply options to the main executable as well
 if (ENABLE_DEVELOPER_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -134,6 +134,15 @@ if (BUILD_TESTS)
         add_test(NAME LogEntryTest COMMAND LogEntryTest)
     endif()
 endif()
+
+# FetchContent for CLI11
+include(FetchContent)
+FetchContent_Declare(
+    CLI11
+    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+    GIT_TAG        v2.4.2 # Pin to a specific version
+)
+FetchContent_MakeAvailable(CLI11)
 
 # --- Installation ---
 # Install the gemini-cli executable
