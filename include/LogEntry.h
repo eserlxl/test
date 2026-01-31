@@ -63,13 +63,44 @@ struct LogValue : LogValueBase {
     // Helper constructors
     LogValue(LogList list);
     LogValue(LogObject obj);
-    
-    // Explicit conversion helpers
-    bool isList() const;
-    bool isObject() const;
-    const LogList& asList() const;
-    const LogObject& asObject() const;
-};
+
+    // New: Convenience constructors for various types
+    LogValue(std::string_view s);
+    LogValue(const char* s);
+    LogValue(std::chrono::system_clock::time_point tp);
+    template <typename Rep, typename Period>
+    LogValue(std::chrono::duration<Rep, Period> d) : LogValueBase(std::chrono::duration_cast<std::chrono::nanoseconds>(d)) {}
+
+    // New: Type checking methods
+    bool isMonostate() const noexcept;
+    bool isBool() const noexcept;
+    bool isInt64() const noexcept;
+    bool isUint64() const noexcept;
+    bool isDouble() const noexcept;
+    bool isString() const noexcept;
+    bool isBinary() const noexcept;
+    bool isDuration() const noexcept;
+
+    // Explicit conversion helpers (now returning std::optional)
+    std::optional<const LogList&> asList() const;
+    std::optional<const LogObject&> asObject() const;
+
+    // New: Accessors for specific types (returning std::optional<T>)
+    std::optional<bool> asBool() const;
+    std::optional<int64_t> asInt64() const;
+    std::optional<uint64_t> asUint64() const;
+    std::optional<double> asDouble() const;
+    std::optional<const std::string&> asString() const;
+    std::optional<const std::vector<uint8_t>&> asBinary() const;
+    std::optional<std::chrono::nanoseconds> asDuration() const;
+
+    // New: Comparison operators
+    std::strong_ordering operator<=>(const LogValue& other) const = default;
+    bool operator==(const LogValue& other) const = default;
+}; // Closing brace for LogValue
+
+// Global function or friend method within LogValue
+std::ostream& operator<<(std::ostream& os, const LogValue& value);
 
 struct LogEntry {
     enum class TimestampFormat { Default, ISO8601, UnixMillis };
@@ -89,6 +120,20 @@ struct LogEntry {
         Timezone timezone = Timezone::UTC; // New: Default to UTC for machine-readable logs
         BinaryEncoding binary_encoding = BinaryEncoding::Hex; // New: Default to Hex encoding
         std::optional<std::string> custom_timestamp_format = std::nullopt; // New: optional strftime string
+
+        // New: Structured data pretty-printing control
+        bool pretty_structured_data = false; // Apply pretty printing to LogList/LogObject values
+        int indent_level = 2; // Indentation for pretty printing (global and for structured data)
+
+        // New: Field inclusion/exclusion filters
+        // A set of field names (e.g., "message", "level", "attributes.my_attr") to explicitly include.
+        // If empty, all default fields are included (unless excluded by exclude_fields).
+        std::set<std::string> include_fields; 
+        // A set of field names to explicitly exclude. Exclusions override inclusions.
+        std::set<std::string> exclude_fields; 
+
+        // New: Options for sanitization (e.g., control characters in strings)
+        bool sanitize_strings = true; // Replace non-printable characters or escape them
     };
 
     static const JsonOptions defaultJsonOptions; // New: Default options for JSON serialization
@@ -110,6 +155,7 @@ struct LogEntry {
     std::string source_function;
     int source_line = 0;
     std::string thread_id;
+    std::string thread_name;
 
     // Tracing context
     std::string trace_id;
@@ -141,7 +187,20 @@ struct LogEntry {
     LogEntry& withLevel(LogLevel l);
     LogEntry& withMessage(std::string_view msg);
     LogEntry& withMetadata(); // Captures PID, Host, App, Thread, and Time if not set
-    LogEntry& withAttribute(std::string key, LogValue value);
+    LogEntry& withAttribute(std::string key, LogValue value); // Existing
+
+    // New: withAttribute overloads for common types
+    LogEntry& withAttribute(std::string_view key, bool value);
+    LogEntry& withAttribute(std::string_view key, int64_t value);
+    LogEntry& withAttribute(std::string_view key, uint64_t value);
+    LogEntry& withAttribute(std::string_view key, double value);
+    LogEntry& withAttribute(std::string_view key, std::string_view value);
+    LogEntry& withAttribute(std::string_view key, const char* value);
+    LogEntry& withAttribute(std::string_view key, std::chrono::system_clock::time_point value);
+    template <typename Rep, typename Period>
+    LogEntry& withAttribute(std::string_view key, std::chrono::duration<Rep, Period> value);
+    LogEntry& withAttribute(std::string_view key, LogList value); // Takes ownership
+    LogEntry& withAttribute(std::string_view key, LogObject value); // Takes ownership
     LogEntry& withAttributes(std::initializer_list<std::pair<const std::string, LogValue>> attrs); // Iteration 1
     LogEntry& withAttributes(const std::map<std::string, LogValue>& attrs); // Iteration 1
     LogEntry& withProcessId(uint64_t pid); // Iteration 1
@@ -149,6 +208,7 @@ struct LogEntry {
     LogEntry& withApp(std::string_view app);   // Iteration 1
     LogEntry& withThreadId(std::string_view tid);
     LogEntry& withThreadId(std::thread::id tid);
+    LogEntry& withThreadName(std::string_view name); // New
     LogEntry& withTimestamp(std::chrono::system_clock::time_point tp, bool include_fractional = true);
     LogEntry& withSource(std::source_location loc = std::source_location::current());
     LogEntry& withTag(std::string_view tag);
@@ -157,19 +217,21 @@ struct LogEntry {
     LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
     LogEntry& withSystemLoad();  // New: Captures system load averages
     LogEntry& withMemoryUsage(); // New: Captures current process RSS
+    LogEntry& captureCallStack(std::string_view attribute_key = "call_stack",
+                               size_t skip_frames = 0,
+                               size_t max_frames = 64); // New
 
     // Attribute manipulation
     LogEntry& removeAttribute(const std::string& key); // Iteration 1
     LogEntry& clearAttributes(); // Iteration 1
     LogEntry& mergeAttributes(const LogEntry& other); // Iteration 1
+    LogEntry& merge(const LogEntry& other, bool overwrite_attributes = true, bool merge_tags = true); // New
 
     LogEntry clonedWithTag(std::string_view tag) const;
 
     // Methods
     bool parseTime();
-    std::string generatedTimestampString(bool include_fractional = true, 
-                                         JsonOptions::Timezone tz = JsonOptions::Timezone::Local,
-                                         const std::optional<std::string>& custom_fmt = std::nullopt) const;
+    std::string generatedTimestampString(const JsonOptions& options = defaultJsonOptions) const;
     void setAttribute(const std::string& key, const std::string& value); // Compat shim
     void setAttribute(const std::string& key, const char* value); // Ambiguity resolver
     void setAttribute(const std::string& key, LogValue value); // New overload
@@ -227,9 +289,20 @@ struct LogEntry {
 
     std::string toJson(const JsonOptions& options = defaultJsonOptions) const;
 
+    // New: Flexible stream output
+    void toStream(std::ostream& os, const JsonOptions& options = defaultJsonOptions) const;
+
     // Stream Support
     friend std::ostream& operator<<(std::ostream& os, const LogEntry& entry);
 };
+
+// New: std::hash specialization for LogEntry
+namespace std {
+    template <>
+    struct hash<LogEntry> {
+        size_t operator()(const LogEntry& entry) const noexcept;
+    };
+}
 
 // Formatter specialization
 template <>
