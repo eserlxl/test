@@ -99,6 +99,7 @@ namespace LogContext {
 // LogValue helpers
 LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
 LogValue::LogValue(LogObject obj) : LogValueBase(std::make_shared<LogObject>(std::move(obj))) {}
+LogValue::LogValue(std::vector<uint8_t> data) : LogValueBase(std::move(data)) {}
 
 ValueType LogValue::type() const noexcept {
     return std::visit([](auto&& arg) -> ValueType {
@@ -211,6 +212,13 @@ std::optional<const std::vector<uint8_t>*> LogValue::asBinary() const {
 
 std::optional<std::chrono::nanoseconds> LogValue::asDuration() const {
     if (auto p = std::get_if<std::chrono::nanoseconds>(this)) return *p;
+    return std::nullopt;
+}
+
+std::optional<std::string_view> LogValue::asStringView() const {
+    if (auto p = std::get_if<std::string>(this)) {
+        return std::string_view(*p);
+    }
     return std::nullopt;
 }
 

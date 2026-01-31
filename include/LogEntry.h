@@ -99,6 +99,7 @@ struct LogValue : LogValueBase {
     // Helper constructors
     LogValue(LogList list);
     LogValue(LogObject obj);
+    LogValue(std::vector<uint8_t> data); // Explicit ctor for binary data
 
     // New: Convenience constructors for various types
     LogValue(std::string_view s);
@@ -106,6 +107,15 @@ struct LogValue : LogValueBase {
     LogValue(std::chrono::system_clock::time_point tp);
     template <typename Rep, typename Period>
     LogValue(std::chrono::duration<Rep, Period> d) : LogValueBase(std::chrono::duration_cast<std::chrono::nanoseconds>(d)) {}
+
+    template<typename T>
+    LogValue(std::optional<T> val) {
+        if (val.has_value()) {
+            *this = LogEntryDetail::toLogValue(val.value());
+        } else {
+            *this = std::monostate{};
+        }
+    }
 
     // Iteration 16: Convenience constructors for LogList and LogObject from initializer lists
     LogValue(std::initializer_list<LogValue> init_list);
@@ -131,6 +141,7 @@ struct LogValue : LogValueBase {
     std::optional<const std::string*> asString() const; // Changed to pointer
     std::optional<const std::vector<uint8_t>*> asBinary() const; // Changed to pointer
     std::optional<std::chrono::nanoseconds> asDuration() const;
+    std::optional<std::string_view> asStringView() const;
 
     // New: Direct Access (throws on mismatch, like std::get)
     template<typename T> const T& to() const { return std::get<T>(static_cast<const LogValueBase&>(*this)); }
@@ -160,9 +171,8 @@ struct LogValue : LogValueBase {
     std::string toString(LogEntryJsonOptions::BinaryEncoding binary_encoding = LogEntryJsonOptions::BinaryEncoding::Hex) const;
 
     // New: Comparison operators
-    std::partial_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
-    bool operator==(const LogValue& other) const; // Remove default to implement manually
-}; // Closing brace for LogValue
+    std::partial_ordering operator<=>(const LogValue& other) const;
+    bool operator==(const LogValue& other) const;
 
 // Global function or friend method within LogValue
 std::ostream& operator<<(std::ostream& os, const LogValue& value);
