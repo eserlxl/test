@@ -24,6 +24,70 @@
 
 namespace LogAnalysis { // Consider a namespace for better organization
 
+// Represents a key for grouped results.
+// Can be a single LogValue (for grouping by one field) or a vector of LogValues
+// (for grouping by multiple fields, where order in the vector matters).
+using GroupKey = std::variant<LogValue, std::vector<LogValue>>;
+
+// Represents statistics for a single group of log entries.
+// Similar to LogStatistics, but computed specifically for entries within this group.
+struct GroupStatistics {
+    size_t total_entries = 0;
+    std::map<LogLevel, size_t> level_counts;
+    std::optional<std::string> first_timestamp;
+    std::optional<std::string> last_timestamp;
+    std::chrono::seconds duration{0};
+    double entries_per_second = 0.0;
+    // Add other relevant statistics from LogStatistics that make sense at a group level
+    // e.g., message template counts, attribute value distributions *within this group*.
+    // For Iteration 18, we can start with basic counts and timestamps.
+};
+
+// The primary return type for grouped analysis: a map from the group key to its statistics.
+using GroupedAnalysisResults = std::map<GroupKey, GroupStatistics>;
+
+// Forward declaration
+class LogAnalyzer;
+
+/**
+ * @brief Abstract interface for providing raw log lines to the LogAnalyzer.
+ *        Implementations can read from various sources (files, network, database, etc.)
+ *        in a line-by-line fashion.
+ */
+class ILogInputStream {
+public:
+    virtual ~ILogInputStream() = default;
+
+    /**
+     * @brief Reads the next raw log line from the stream.
+     * @return An optional string containing the log line, or std::nullopt if end of stream is reached.
+     *         The string returned should be a complete line (e.g., without newline characters).
+     * @throws std::ios_base::failure or other exceptions on unrecoverable I/O errors.
+     */
+    virtual std::optional<std::string> readLine() = 0;
+
+    /**
+     * @brief Provides an estimate of the total bytes available from the entire stream, if known.
+     *        This is primarily used for progress reporting.
+     * @return An optional size_t representing the total size in bytes, or std::nullopt if unknown.
+     */
+    virtual std::optional<size_t> getTotalBytes() const { return std::nullopt; }
+
+    /**
+     * @brief Provides the current number of bytes that have been successfully read from the stream.
+     *        This is primarily used for progress reporting.
+     * @return The number of bytes processed so far, or 0 if not tracked.
+     */
+    virtual size_t getBytesProcessed() const { return 0; }
+
+    /**
+     * @brief Provides a descriptive name for the input stream, useful for logging or UI.
+     * @return A string representing the source (e.g., "file:///path/to/log.log", "s3://bucket/key").
+     */
+    virtual std::string getSourceName() const = 0;
+};
+
+
 // Represents a collection of log files/sources
 class LogSource {
 public:
@@ -44,6 +108,39 @@ private:
     // Internal list of resolved file paths
     mutable std::vector<std::string> resolved_file_paths_; 
     void resolveFilePaths() const; // Helper to populate resolved_file_paths_
+};
+
+/**
+ * @brief Concrete implementation of ILogInputStream that reads from LogSource objects.
+ *        This class adapts the existing LogSource functionality (files, directories, stdin)
+ *        to the new ILogInputStream interface. It handles iterating through multiple files
+ *        if the LogSource represents a directory.
+ */
+class LogSourceInputStream : public ILogInputStream {
+public:
+    /**
+     * @brief Constructs a LogSourceInputStream from an existing LogSource.
+     * @param source The LogSource specifying the log file(s) or directory.
+     * @contract The LogSource must be valid and its paths resolvable.
+     */
+    explicit LogSourceInputStream(const LogSource& source);
+    ~LogSourceInputStream() override; // Ensure file streams are closed
+
+    std::optional<std::string> readLine() override;
+    std::optional<size_t> getTotalBytes() const override;
+    size_t getBytesProcessed() const override;
+    std::string getSourceName() const override;
+
+private:
+    LogSource source_;
+    std::vector<std::string> file_paths_;
+    size_t current_file_index_ = 0;
+    std::unique_ptr<std::ifstream> current_file_stream_;
+    size_t overall_bytes_processed_ = 0;
+    std::optional<size_t> cached_total_bytes_; // Cache total bytes after calculation
+
+    void openNextFile(); // Helper to open the next file in the list
+    void calculateTotalBytes(); // Helper to calculate total bytes across all files
 };
 
 enum class OutputFormat {
