@@ -2,6 +2,8 @@
 #include <string>
 #include <LogAnalyzer.h>
 
+using namespace LogAnalysis;
+
 void printUsage(const char *program_name)
 {
     std::cout << "Usage: " << program_name << " <log_file>" << std::endl;

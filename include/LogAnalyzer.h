@@ -450,6 +450,7 @@ public:
     // Legacy Output (will be deprecated or changed to call printResults)
     [[deprecated("Use printResults() instead for structured output control.")]]
     void printStatistics() const;
+    [[nodiscard]] std::vector<LogEntry> getFilteredEntries() const;
     [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const FilterOptions& options) const;
     [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const LogPredicate& predicate) const;
 
@@ -464,11 +465,14 @@ private:
 
     std::vector<LogEnricher> enrichers_;
     std::optional<FilterOptions> currentFilterOptions_; // New: Stores current filter for analyze/getStatistics
+    std::unique_ptr<LogPredicate> currentFilterPredicate_; // NEW Iteration 8: Stores predicate from query string
 
     LogEntry parseLogLine(const std::string& line, size_t line_number = 0);
     std::string levelToString(LogLevel level) const;
     bool matchFilter(const LogEntry& entry, const FilterOptions& options) const; // Keep for internal use if needed
     void applyEnrichers(LogEntry& entry);
+    void applyAnonymizers(LogEntry& entry);
+    std::string generateMessageTemplate(std::string_view message) const;
     std::vector<LogEntry> getFilteredEntriesInternal() const; // Helper to apply currentFilterOptions_
 
     std::map<std::string, int> named_group_indices_;

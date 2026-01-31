@@ -7,6 +7,8 @@
 #include <chrono>
 #include <thread>
 
+using namespace LogAnalysis;
+
 namespace fs = std::filesystem;
 
 class LogAnalyzerTest : public ::testing::Test
@@ -82,8 +84,8 @@ TEST_F(LogAnalyzerTest, LoadWithStats)
     LogAnalyzer analyzer;
     auto result = analyzer.loadFileWithStats(testLogFile);
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->loaded_count, 5);
-    EXPECT_EQ(result->error_count, 0);
+    EXPECT_EQ(result->first.loaded_count, 5);
+    EXPECT_EQ(result->first.error_count, 0);
 }
 
 TEST_F(LogAnalyzerTest, StrictModeParsing)
@@ -115,8 +117,8 @@ TEST_F(LogAnalyzerTest, StrictModeParsing)
     auto result = analyzer.loadFileWithStats(mixedFile);
 
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->loaded_count, 2);
-    EXPECT_EQ(result->error_count, 1);
+    EXPECT_EQ(result->first.loaded_count, 2);
+    EXPECT_EQ(result->first.error_count, 1);
     EXPECT_EQ(error_count, 1);
 }
 
@@ -144,9 +146,9 @@ TEST_F(LogAnalyzerTest, MaxErrorsLimit)
     auto result = analyzer.loadFileWithStats(badFile);
 
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->error_count, 3);
+    EXPECT_EQ(result->first.error_count, 3);
     EXPECT_EQ(error_callback_count, 3); // Verify callback count
-    EXPECT_EQ(result->loaded_count, 0);
+    EXPECT_EQ(result->first.loaded_count, 0);
 }
 
 TEST_F(LogAnalyzerTest, GetEntriesSpan)
@@ -1092,4 +1094,80 @@ TEST_F(LogAnalyzerTest, PredicateComposition)
     EXPECT_FALSE(pred->test(e1));
     EXPECT_FALSE(pred->test(e2));
     EXPECT_TRUE(pred->test(e3));
+}
+TEST_F(LogAnalyzerTest, Anonymization) {
+    LogAnalyzer analyzer;
+    analyzer.addAnonymizer(std::make_unique<RegexAnonymizer>(R"(\d{4})", "****"));
+    
+    LogEntry entry;
+    entry.message = "User ID 1234 logged in";
+    analyzer.addEntry(entry);
+    
+    auto entries = analyzer.getEntries();
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].message, "User ID **** logged in");
+}
+
+TEST_F(LogAnalyzerTest, EnhancedStatistics) {
+    LogAnalyzer analyzer;
+    
+    LogEntry e1, e2;
+    e1.message = "user logged in";
+    e1.withAttribute("user", "alice");
+    e2.message = "user logged in";
+    e2.withAttribute("user", "bob");
+    analyzer.addEntry(e1);
+    analyzer.addEntry(e2);
+    
+    AnalysisConfig config;
+    config.enable_message_template_counts = true;
+    config.attributes_for_distribution.insert("user");
+    analyzer.setAnalysisConfig(config);
+    
+    auto stats = analyzer.getStatistics();
+    
+    EXPECT_EQ(stats.message_template_counts.size(), 1);
+    EXPECT_EQ(stats.message_template_counts["user logged in"], 2);
+    
+    EXPECT_EQ(stats.attribute_value_distributions.size(), 1);
+    EXPECT_EQ(stats.attribute_value_distributions["user"][LogValue("alice")], 1);
+    EXPECT_EQ(stats.attribute_value_distributions["user"][LogValue("bob")], 1);
+}
+
+TEST_F(LogAnalyzerTest, QueryLanguage) {
+    LogAnalyzer analyzer;
+    analyzer.loadFile(testLogFile);
+    
+    analyzer.setFilterQuery("level = ERROR");
+    auto entries = analyzer.getFilteredEntries();
+    EXPECT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].level, LogLevel::ERROR);
+}
+
+TEST_F(LogAnalyzerTest, ConfigSerialization) {
+    ParsingConfig config;
+    config.strict_mode = true;
+    config.line_pattern = "pattern";
+    
+    std::string json = config.toJson();
+    
+    auto new_config_res = ParsingConfig::fromJson(json);
+    ASSERT_TRUE(new_config_res.has_value());
+    
+    EXPECT_EQ(new_config_res->strict_mode, config.strict_mode);
+    EXPECT_EQ(new_config_res->line_pattern, config.line_pattern);
+}
+
+TEST_F(LogAnalyzerTest, FilterOptionsSerialization) {
+    FilterOptions options;
+    options.keyword = "test";
+    options.level = LogLevel::INFO;
+    
+    std::string json = options.toJson();
+    
+    auto new_options_res = FilterOptions::fromJson(json);
+    ASSERT_TRUE(new_options_res.has_value());
+    
+    EXPECT_EQ(new_options_res->keyword, options.keyword);
+    EXPECT_EQ(new_options_res->level, options.level);
 }
