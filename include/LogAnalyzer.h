@@ -49,6 +49,84 @@ using GroupedAnalysisResults = std::map<GroupKey, GroupStatistics>;
 // Forward declaration
 class LogAnalyzer;
 
+// --- NEW Iteration 27 Additions ---
+// 1.1 Time Series Anomaly Detection
+struct AnomalyDetectionConfig {
+    std::chrono::system_clock::duration bucket_size = std::chrono::minutes(5); // Time window for analysis
+    double sensitivity = 2.0; // Multiplier for standard deviation (e.g., 2.0 for 2-sigma)
+    bool detect_spikes = true;
+    bool detect_drops = true;
+    std::set<LogLevel> levels_to_monitor = {LogLevel::ERROR, LogLevel::CRITICAL}; // Levels to consider for anomalies
+    std::string attribute_for_grouping; // Optional: detect anomalies per attribute group
+};
+
+struct AnomalyReportEntry {
+    std::chrono::system_clock::time_point timestamp;
+    size_t observed_count;
+    double expected_count;
+    double deviation; // How much it deviated from expected
+    std::string description; // e.g., "High spike in ERROR logs"
+    std::optional<LogValue> group_key; // If grouped anomaly detection
+};
+
+// 1.2 Correlation Analysis
+struct CorrelationConfig {
+    std::vector<std::string> attributes_to_correlate; // e.g., {"user_id", "request_status"}
+    std::chrono::system_clock::duration time_window = std::chrono::seconds(1); // Events within this window are correlated
+    size_t min_occurrences = 10; // Minimum number of occurrences for a pattern to be considered
+};
+
+struct CorrelationResult {
+    std::map<std::string, LogValue> pattern_A;
+    std::map<std::string, LogValue> pattern_B;
+    double correlation_score; // e.g., lift, confidence, or custom score
+    size_t co_occurrence_count;
+    size_t occurrences_A;
+    size_t occurrences_B;
+    std::string description; // e.g., "Error X often follows successful login Y"
+};
+
+// 1.3 Session/Transaction Tracing
+struct SessionConfig {
+    std::string session_id_attribute; // e.g., "session_id", "request_id"
+    std::optional<std::chrono::system_clock::duration> session_timeout; // Max inactivity between logs in a session
+    std::vector<std::string> session_start_patterns; // Regex patterns to identify session start
+    std::vector<std::string> session_end_patterns;   // Regex patterns to identify session end
+};
+
+struct LogSession {
+    std::string session_id_value;
+    std::chrono::system_clock::time_point start_time;
+    std::chrono::system_clock::time_point end_time;
+    std::vector<LogEntry> entries; // Sorted by timestamp
+    LogStatistics session_stats; // Statistics specific to this session
+};
+
+// 1.4 Custom Aggregations/Metrics
+using CustomAggregationFunction = std::function<LogValue(const std::vector<LogEntry>&)>;
+
+struct CustomAggregation {
+    std::string name; // Name of the aggregated metric
+    std::string group_by_attribute; // Attribute to group entries by before aggregating
+    CustomAggregationFunction aggregate_func; // User-provided function
+};
+
+// 4.1 In-Memory Indexing
+struct IndexingConfig {
+    std::set<std::string> attributes_to_index; // Attributes on which to build indices
+    bool index_timestamps = true;
+    bool index_levels = true;
+    size_t min_cardinality_for_index = 100; // Only index attributes with enough distinct values
+};
+
+// 4.2 Optimized LogEntry Storage
+enum class LogStorageStrategy {
+    DEFAULT_COPY_STRINGS,   // Current behavior: copy all strings
+    STRING_INTERNING,       // Store unique strings once, use pointers/indices
+    COMPRESSED_FIELDS       // e.g., run-length encoding for common fields, or lightweight compression
+};
+
+
 /**
  * @brief Abstract interface for providing raw log lines to the LogAnalyzer.
  *        Implementations can read from various sources (files, network, database, etc.)
@@ -143,6 +221,42 @@ private:
     void calculateTotalBytes(); // Helper to calculate total bytes across all files
 };
 
+// 2.2 Database Integration
+class ILogDataStore {
+public:
+    virtual ~ILogDataStore() = default;
+
+    /**
+     * @brief Loads log entries from the data store.
+     * @return A vector of LogEntry.
+     * @throws std::runtime_error on failure.
+     */
+    virtual std::vector<LogEntry> loadEntries() = 0;
+
+    /**
+     * @brief Exports log entries to the data store.
+     * @param entries The log entries to export.
+     * @throws std::runtime_error on failure.
+     */
+    virtual void exportEntries(std::span<const LogEntry> entries) = 0;
+
+    /**
+     * @brief Exports aggregated statistics to the data store.
+     * @param stats The LogStatistics to export.
+     * @throws std::runtime_error on failure.
+     */
+    virtual void exportStatistics(const LogStatistics& stats) = 0;
+};
+
+// 2.3 Custom Output Templates
+class ITemplatingEngine {
+public:
+    virtual ~ITemplatingEngine() = default;
+    virtual std::string render(std::string_view template_str, const LogEntry& entry) const = 0;
+    virtual std::string renderStats(std::string_view template_str, const LogStatistics& stats) const = 0;
+    // Optionally, support rendering lists of entries/stats, or custom data structures
+};
+
 enum class OutputFormat {
     TEXT, // Human-readable, similar to current printStatistics
     JSON,
@@ -208,6 +322,13 @@ struct AnalysisConfig {
     std::vector<std::string> group_by_fields;
     std::string sort_by_field;
     bool sort_descending = true; // true for descending, false for ascending
+
+    // Iteration 27 Additions
+    std::optional<AnomalyDetectionConfig> anomaly_detection_config; // New
+    std::optional<CorrelationConfig> correlation_config; // New
+    std::optional<SessionConfig> session_config; // New
+    std::vector<CustomAggregation> custom_aggregations; // New
+    std::optional<IndexingConfig> indexing_config; // New
 };
 
 struct ParseError {
@@ -266,6 +387,9 @@ struct ParsingConfig {
     // NEW Iteration 14: Custom parsing rules
     std::string custom_regex_pattern;
     std::string custom_timestamp_format;
+
+    // Iteration 27 Additions
+    LogStorageStrategy storage_strategy = LogStorageStrategy::DEFAULT_COPY_STRINGS; // New
 
     // Returns true if the configuration is valid (regex compiles, indices are within range)
     bool validate() const;
@@ -490,6 +614,20 @@ public:
     void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
 };
 
+class TemplatedExporter : public LogExporter {
+    std::ostream& out_;
+    std::unique_ptr<ITemplatingEngine> templating_engine_;
+    std::string entry_template_;
+    std::string stats_template_;
+public:
+    explicit TemplatedExporter(std::ostream& out,
+                               std::unique_ptr<ITemplatingEngine> engine,
+                               std::string entry_template,
+                               std::string stats_template = "");
+    void exportStats(const LogStatistics& stats) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+};
+
 // --- NEW Iteration 8: Log Anonymization / Redaction ---
 // Base interface for anonymization strategies.
 class LogAnonymizer {
@@ -541,6 +679,17 @@ public:
     LogAnalyzerBuilder& addEnricher(LogEnricher enricher); // Use LogEnricher directly
     LogAnalyzerBuilder& addAnonymizer(std::unique_ptr<LogAnonymizer> anonymizer); // Use LogAnonymizer
 
+    /**
+     * @brief Sets up a templated exporter using a custom templating engine and templates.
+     * @param engine Unique pointer to an ITemplatingEngine implementation.
+     * @param entry_template String template for individual log entries.
+     * @param stats_template Optional string template for statistics.
+     * @return Reference to the builder for chaining.
+     */
+    LogAnalyzerBuilder& withTemplatedExporter(std::unique_ptr<ITemplatingEngine> engine,
+                                              std::string entry_template,
+                                              std::string stats_template = "");
+
     // Build method
     std::unique_ptr<LogAnalyzer> build(); // Return unique_ptr to avoid move/copy issues
 
@@ -552,6 +701,7 @@ private:
     std::optional<std::string> initial_filter_query_;
     std::vector<LogEnricher> enrichers_; // Use LogEnricher directly
     std::vector<std::unique_ptr<LogAnonymizer>> anonymizers_; // Use LogAnonymizer
+    std::unique_ptr<LogExporter> custom_exporter_; // Used if withTemplatedExporter is called
     // ... other potential configurations
 };
 
@@ -715,10 +865,114 @@ public:
      * @return A vector of source file path to its frequency count, sorted by frequency (descending).
      */
     std::vector<std::pair<std::string, size_t>> getTopNSourceFiles(size_t n) const;
-    
+
+    // Iteration 27: Advanced Analysis Capabilities
+    /**
+     * @brief Performs anomaly detection based on the configured AnalysisConfig.
+     * @param options Optional FilterOptions to apply before anomaly detection.
+     * @return A vector of AnomalyReportEntry found.
+     */
+    std::vector<AnomalyReportEntry> detectAnomalies(const std::optional<FilterOptions>& options = std::nullopt) const;
+
+    /**
+     * @brief Performs correlation analysis on log entries.
+     * @param options Optional FilterOptions to apply before correlation.
+     * @return A vector of CorrelationResult.
+     */
+    std::vector<CorrelationResult> analyzeCorrelations(const std::optional<FilterOptions>& options = std::nullopt) const;
+
+    /**
+     * @brief Extracts and returns log sessions based on configured SessionConfig.
+     * @param options Optional FilterOptions to apply before session extraction.
+     * @return A vector of LogSession.
+     */
+    std::vector<LogSession> getLogSessions(const std::optional<FilterOptions>& options = std::nullopt) const;
+
+    /**
+     * @brief Performs custom aggregations based on configured AnalysisConfig.
+     * @param options Optional FilterOptions to apply before aggregation.
+     * @return A map where key is the group_by_attribute's value, and value is another map
+     *         from CustomAggregation name to its calculated LogValue.
+     */
+    std::map<LogValue, std::map<std::string, LogValue>> performCustomAggregations(const std::optional<FilterOptions>& options = std::nullopt) const;
+
+    // Iteration 27: Input/Output Enhancements
+    /**
+     * @brief Loads log entries from a generic ILogInputStream.
+     * @param input_stream A unique_ptr to an ILogInputStream instance.
+     * @param progress Optional progress callback.
+     * @return An expected result with LoadResult on success, or error string on failure.
+     */
+    std::expected<LoadResult, std::string> loadFromStream(std::unique_ptr<ILogInputStream> input_stream, ProgressCallback progress = nullptr);
+
+    /**
+     * @brief Continuously processes log entries from a generic ILogInputStream.
+     *        This function blocks until the stop predicate returns true or stream ends.
+     * @param input_stream A unique_ptr to an ILogInputStream instance.
+     * @param entry_callback Callback for each parsed LogEntry.
+     * @param error_callback Callback for parsing errors.
+     * @param stop_predicate Predicate to determine when to stop processing.
+     * @return void (runs until stopped).
+     */
+    void processStreamContinuously(std::unique_ptr<ILogInputStream> input_stream,
+                                   std::function<void(LogEntry)> entry_callback,
+                                   std::function<void(const ParseError&)> error_callback = nullptr,
+                                   std::function<bool()> stop_predicate = nullptr);
+    /**
+     * @brief Loads log entries from a specified data store.
+     * @param data_store A unique_ptr to an ILogDataStore instance.
+     * @return An expected result with LoadResult on success, or error string on failure.
+     */
+    std::expected<LoadResult, std::string> loadFromDataStore(std::unique_ptr<ILogDataStore> data_store);
+
+    /**
+     * @brief Exports current (potentially filtered) log entries and/or statistics to a data store.
+     * @param data_store A unique_ptr to an ILogDataStore instance.
+     * @param export_entries If true, export log entries.
+     * @param export_stats If true, export statistics.
+     * @param options Optional FilterOptions to apply before exporting entries/stats.
+     * @throws std::runtime_error on failure.
+     */
+    void exportToDataStore(std::unique_ptr<ILogDataStore> data_store,
+                           bool export_entries = true,
+                           bool export_stats = true,
+                           const std::optional<FilterOptions>& options = std::nullopt) const;
+
     // Accessors
     std::vector<LogEntry> getEntriesSpan() const;
     [[nodiscard]] std::vector<LogEntry> getEntries() const;
+
+    // Iteration 27: Querying and Filtering Improvements
+    /**
+     * @brief Saves the current filter predicate (derived from FilterOptions or query string) as a named profile.
+     * @param profile_name The name for the profile.
+     * @return An expected void on success, or error string on failure (e.g., cannot serialize).
+     */
+    std::expected<void, std::string> saveFilterProfile(std::string_view profile_name) const;
+
+    /**
+     * @brief Loads and applies a named filter profile.
+     * @param profile_name The name of the profile to load.
+     * @return An expected void on success, or error string on failure.
+     */
+    std::expected<void, std::string> loadFilterProfile(std::string_view profile_name);
+
+    /**
+     * @brief Returns a list of available filter profile names.
+     */
+    std::vector<std::string> listFilterProfiles() const;
+
+    // Iteration 27: Performance and Scalability
+    /**
+     * @brief Rebuilds internal indices based on the current `IndexingConfig`.
+     *        Automatically called after loading if indexing is enabled.
+     */
+    void rebuildIndices();
+
+    /**
+     * @brief Checks if indexing is currently active for a given attribute.
+     */
+    bool isIndexed(std::string_view attribute_name) const;
 
     // Enrichment
     void addEnricher(LogEnricher enricher);
@@ -794,8 +1048,14 @@ private:
     mutable std::optional<LogStatistics> cached_stats_; // For caching statistics
     // NEW Iteration 8: Analysis Configuration
     std::optional<AnalysisConfig> currentAnalysisConfig_; // Stores current analysis configuration
-    // NEW Iteration 8: Log Anonymization
-    std::vector<std::unique_ptr<LogAnonymizer>> anonymizers_; // List of active anonymizers
+
+    // Iteration 27: Querying and Filtering Improvements (Persistent Profiles)
+    std::map<std::string, std::string> stored_filter_profiles_;
+
+    // Iteration 27: Performance and Scalability (In-Memory Indexing)
+    std::map<std::string, std::map<LogValue, std::vector<size_t>>> attribute_indices_;
+    std::map<LogLevel, std::vector<size_t>> level_index_;
+    bool indices_dirty_ = true; // Flag to indicate if indices need rebuilding
 
     // Tailing-related members
     std::thread tailing_thread_;

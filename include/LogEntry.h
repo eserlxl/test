@@ -36,50 +36,18 @@ enum class LogLevel {
     UNKNOWN = 5
 };
 
-// Forward declaration for LogEntry to allow nested types to be defined globally
-struct LogEntry;
+// --- Corrected Order for LogValue and related types ---
 
-// Define JsonOptions outside LogEntry to resolve circular dependencies and allow
-// LogValue to reference its enums.
-struct LogEntryJsonOptions {
-    enum class TimestampFormat { Default, ISO8601, UnixMillis };
-    enum class Precision { Seconds, Millis, Micros, Nanos };
-    enum class Timezone { Local, UTC };
-    enum class BinaryEncoding { Hex, Base64 };
-
-    bool pretty = false;
-    bool include_source = true;
-    bool include_thread = true;
-    bool include_tracing = true;
-    bool exclude_empty = false;
-    TimestampFormat timestamp_format = TimestampFormat::Default;
-    Precision precision = Precision::Millis;
-    Timezone timezone = Timezone::UTC;
-    BinaryEncoding binary_encoding = BinaryEncoding::Hex;
-    std::optional<std::string> custom_timestamp_format = std::nullopt;
-
-    bool pretty_structured_data = false;
-    int indent_level = 2;
-
-    std::set<std::string> include_fields;
-    std::set<std::string> exclude_fields;
-
-    bool sanitize_strings = true;
-};
-
-// Define TimestampFormatOptions outside LogEntry
-struct LogEntryTimestampFormatOptions {
-    // Reference to LogEntryJsonOptions::Precision and Timezone
-    LogEntryJsonOptions::Precision precision = LogEntryJsonOptions::Precision::Millis;
-    LogEntryJsonOptions::Timezone timezone = LogEntryJsonOptions::Timezone::Local;
-    std::optional<std::string> custom_format = std::nullopt;
-};
-
-// Supported types for structured data
+// Forward declarations
 struct LogValue;
+struct LogEntry; // Forward declare LogEntry
+struct ContextFrame; // Forward declare ContextFrame as it uses LogValue
+
+// Define LogList and LogObject (which depend on LogValue)
 using LogList = std::vector<LogValue>;
 using LogObject = std::map<std::string, LogValue>;
 
+// LogValueBase definition
 using LogValueBase = std::variant<
     std::monostate,
     bool,
@@ -93,6 +61,40 @@ using LogValueBase = std::variant<
     std::shared_ptr<LogObject>
 >;
 
+// LogEntryJsonOptions and LogEntryTimestampFormatOptions (these don't depend on LogValue/Entry directly, can be early)
+struct LogEntryJsonOptions {
+    enum class TimestampFormat { Default, ISO8601, UnixMillis };
+    enum class Precision { Seconds, Millis, Micros, Nanos };
+    enum class Timezone { Local, UTC };
+    enum class BinaryEncoding { Hex, Base64 };
+
+    bool pretty = false;
+    bool include_source = true;
+    bool include_thread = true;
+    bool include_tracing = true;
+    bool exclude_empty = false;
+    TimestampFormat timestamp_format = TimestampFormat::Default;
+    Precision precision = Precision::Millis;
+    Timezone timezone = LogEntryJsonOptions::Timezone::UTC; // Corrected initialization
+    BinaryEncoding binary_encoding = BinaryEncoding::Hex;
+    std::optional<std::string> custom_timestamp_format = std::nullopt;
+
+    bool pretty_structured_data = false;
+    int indent_level = 2;
+
+    std::set<std::string> include_fields;
+    std::set<std::string> exclude_fields;
+
+    bool sanitize_strings = true;
+};
+
+struct LogEntryTimestampFormatOptions {
+    LogEntryJsonOptions::Precision precision = LogEntryJsonOptions::Precision::Millis;
+    LogEntryJsonOptions::Timezone timezone = LogEntryJsonOptions::Timezone::Local;
+    std::optional<std::string> custom_format = std::nullopt;
+};
+
+// LogValue struct definition (will later use LogEntryDetail)
 struct LogValue : LogValueBase {
     using LogValueBase::LogValueBase;
     
@@ -111,7 +113,12 @@ struct LogValue : LogValueBase {
     template<typename T>
     LogValue(std::optional<T> val) {
         if (val.has_value()) {
-            *this = LogEntryDetail::toLogValue(val.value());
+            // This is a template member, it requires LogEntryDetail to be declared.
+            // But LogEntryDetail needs LogValue to be complete to return LogValue.
+            // Temporarily commented out to break circular dependency in header.
+            // The definition in .cpp would normally solve this with full type.
+            // *this = LogEntryDetail::toLogValue(val.value());
+            *this = val.value(); // Try direct assignment assuming implicit conversion or full definition is elsewhere
         } else {
             *this = std::monostate{};
         }
@@ -173,8 +180,9 @@ struct LogValue : LogValueBase {
     // New: Comparison operators
     std::partial_ordering operator<=>(const LogValue& other) const;
     bool operator==(const LogValue& other) const;
+}; // Close LogValue struct
 
-// Global function or friend method within LogValue
+// Global function (friend) - this is a free function now
 std::ostream& operator<<(std::ostream& os, const LogValue& value);
 
 // New: std::hash specialization for LogValue
@@ -184,6 +192,8 @@ namespace std {
     };
 } // namespace std
 
+
+// LogEntryDetail definition (now that LogValue is complete)
 namespace LogEntryDetail {
     // Default toLogValue for types not explicitly handled
     template<typename T>
@@ -199,7 +209,7 @@ namespace LogEntryDetail {
             }
         } else if constexpr (std::is_floating_point_v<ArgumentType>) {
             return LogValue(static_cast<double>(arg));
-        } else if constexpr (std::is_same_v<bool, ArgumentType>) {
+            } else if constexpr (std::is_same_v<bool, ArgumentType>) {
             return LogValue(static_cast<bool>(arg));
         } else {
             // Fallback for types not directly convertible: use stringstream
@@ -214,8 +224,9 @@ namespace LogEntryDetail {
     inline LogValue toLogValue(LogObject obj) { return LogValue(std::move(obj)); }
 } // namespace LogEntryDetail
 
+
 // Forward declarations for internal implementation details of LogContext.
-struct ContextFrame {
+struct ContextFrame { // Now ContextFrame definition can come here, it uses LogValue
     std::map<std::string, LogValue> attributes;
     std::unordered_set<std::string> tags; // Use unordered_set for faster lookups during merging
 };
@@ -274,6 +285,9 @@ namespace LogContext {
     void apply(LogEntry& entry);
 
 } // namespace LogContext
+
+// Forward declaration for LogEntry (already present above, but for clarity after LogContext)
+// struct LogEntry; // Original forward declaration moved higher.
 
 struct LogEntry {
     // Using declarations to make external structs accessible via LogEntry::
@@ -479,7 +493,12 @@ struct LogEntry {
     std::string getAttributeAsString(const std::string& key) const; // Helper
     
     bool hasAttribute(const std::string& key) const;
-    std::optional<LogValue> getAttribute(const std::string& key) const;
+    /**
+     * @brief Retrieves an attribute's value, supporting nested paths (e.g., "json.data.user_id").
+     * @param key The attribute key, potentially including dot notation for nested access.
+     * @return An optional LogValue.
+     */
+    std::optional<LogValue> getAttribute(std::string_view key) const;
     
     template<typename T>
     std::optional<T> getAttributeAs(const std::string& key) const {
