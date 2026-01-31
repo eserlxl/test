@@ -182,8 +182,17 @@ std::optional<uint64_t> LogValue::asUint64() const {
 }
 
 std::optional<double> LogValue::asDouble() const {
-    if (auto p = std::get_if<double>(this)) return *p;
-    return std::nullopt;
+    return std::visit([](auto&& arg) -> std::optional<double> {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, double>) {
+            return arg;
+        } else if constexpr (std::is_same_v<T, int64_t>) {
+            return static_cast<double>(arg);
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            return static_cast<double>(arg);
+        }
+        return std::nullopt;
+    }, static_cast<const LogValueBase&>(*this));
 }
 
 std::optional<const std::string*> LogValue::asString() const {

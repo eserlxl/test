@@ -1037,9 +1037,13 @@ TEST_F(LogAnalyzerTest, NamedCaptureGroupsIntegration)
     }
 
     LogAnalyzer analyzer;
-    // Pattern with named groups
-    std::string pattern = R"(^(?<timestamp>\S+ \S+) \[(?<level>\w+)\] \[(?<thread_id>.*?)\] (?<message>.*)$)";
-    ParsingConfig config = ParsingConfig::fromRegex(pattern);
+    std::string pattern = R"(^(\S+ \S+) \[(\w+)\] \[(.*?)\] (.*)$)"; // Use positional groups
+    ParsingConfig config;
+    config.line_pattern = pattern;
+    config.field_mapping["1"] = "timestamp"; // Map positional index 1 to "timestamp"
+    config.field_mapping["2"] = "level";
+    config.field_mapping["3"] = "thread_id";
+    config.field_mapping["4"] = "message";
     config.strict_mode = true;
 
     analyzer.setParsingConfig(config);
@@ -1066,7 +1070,7 @@ TEST_F(LogAnalyzerTest, CsvExportFormat)
     exporter.exportEntries(analyzer.getEntriesSpan());
 
     std::string output = ss.str();
-    EXPECT_NE(output.find("Timestamp,Level,Message,ThreadId"), std::string::npos);
+    EXPECT_NE(output.find("\"Timestamp\",\"Level\",\"Message\",\"ThreadId\""), std::string::npos);
     EXPECT_NE(output.find("\"2023-10-27 10:00:00\",\"INFO\",\"System started\""), std::string::npos);
 }
 

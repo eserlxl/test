@@ -931,8 +931,9 @@ void testEventId() {
 // Dummy global LogEntry to ensure LogContext::Scope is instantiated and compiled,
 // as the primary creation path is via LogEntry::create().
 // This helps catch compilation issues related to LogContext in isolation.
-[[maybe_unused]] static LogContext::Scope globalDummyScope(
-    {{"globalAttr", LogValue("globalVal")}}, {"globalTag"});
+// Removed to fix double-free issue due to static object destruction order.
+// [[maybe_unused]] static LogContext::Scope globalDummyScope(
+//     {{"globalAttr", LogValue("globalVal")}}, {"globalTag"});
 
 
 void testLogContextScope() {

@@ -860,14 +860,17 @@ std::unique_ptr<LogAnalysis::LogPredicate> LogAnalysis::FilterOptions::toPredica
     // NEW: Handle attribute_filter_conditions
     for (const auto& [attr_name, conditions] : attribute_filter_conditions) {
         if (!conditions.empty()) {
-            std::vector<std::unique_ptr<LogPredicate>> or_group_preds;
+            std::unique_ptr<LogPredicate> and_group_root = nullptr; // Initialize a root for ANDing
             for (const auto& condition : conditions) {
-                or_group_preds.push_back(Filters::Attribute(attr_name, condition, case_sensitive));
+                auto current_pred = Filters::Attribute(attr_name, condition, case_sensitive);
+                if (!and_group_root) {
+                    and_group_root = std::move(current_pred);
+                } else {
+                    and_group_root = Filters::And(std::move(and_group_root), std::move(current_pred));
+                }
             }
-            if (or_group_preds.size() == 1) {
-                combine(std::move(or_group_preds[0]));
-            } else if (or_group_preds.size() > 1) {
-                combine(std::make_unique<LogAnalysis::Filters::OrManyPredicate>(std::move(or_group_preds)));
+            if (and_group_root) { // If any conditions were added
+                combine(std::move(and_group_root));
             }
         }
     }
@@ -2272,7 +2275,35 @@ std::string LogAnalysis::LogAnalyzer::generateMessageTemplate(std::string_view m
             // Named capture groups mapping
             for (const auto &[group_name, field_name] : this->config_.field_mapping)
             {
-                std::string val = get_val(group_name);
+                std::string val;
+                
+                // Check if group_name is a numeric string (positional index)
+                bool is_numeric_group_name = true;
+                if (group_name.empty()) { // Handle empty string case for safety
+                    is_numeric_group_name = false;
+                } else {
+                    for (char c : group_name) {
+                        if (!std::isdigit(c)) {
+                            is_numeric_group_name = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (is_numeric_group_name) {
+                    int index = std::stoi(group_name);
+                    if (index > 0 && static_cast<size_t>(index) < match.size()) {
+                        val = match[index].str();
+                    }
+                } else {
+                    // Fallback to searching in named_group_indices_ for non-numeric group_names
+                    auto it = this->named_group_indices_.find(group_name);
+                    if (it != this->named_group_indices_.end() && static_cast<size_t>(it->second) < match.size())
+                    {
+                        val = match[it->second].str();
+                    }
+                }
+
                 if (val.empty())
                     continue;
                 if (field_name == "timestamp")
