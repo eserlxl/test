@@ -1230,7 +1230,7 @@ void LogAnalyzer::analyze()
         stats.duration = std::chrono::duration_cast<std::chrono::seconds>(min_max_it.second->time_point - min_max_it.first->time_point);
         if (stats.duration.count() > 0)
         {
-            stats.entries_per_second = static_cast<double>(stats.total_entries) / stats.duration.count();
+            stats.entries_per_second = static_cast<double>(stats.total_entries) / static_cast<double>(stats.duration.count());
         }
     }
 

@@ -1323,7 +1323,7 @@ static std::string escapeJson(const std::string &s)
             o << "\\t";
             break;
         default:
-            if ('\x00' <= (unsigned char)c && (unsigned char)c <= '\x1f')
+            if ((unsigned char)c <= '\x1f')
             {
                 o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)(unsigned char)c;
             }
