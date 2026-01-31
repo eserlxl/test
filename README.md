@@ -77,12 +77,81 @@ This project uses CMake for its build system.
     make
     ```
 
+## Command-Line Interface (CLI) Usage
+
+The `logAnalyzer` executable provides a powerful command-line interface to access the library's features for analysis, filtering, and viewing logs directly from your terminal.
+
+The basic syntax is: `logAnalyzer [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [INPUT_SOURCES...]`
+
+### Commands
+
+*   `analyze` (default): Analyzes logs and prints statistics.
+*   `entries`: Lists filtered log entries.
+*   `tail`: Monitors a log file in real-time, similar to `tail -f`.
+
+### Global Options
+
+*   `-h, --help`: Show the help message.
+*   `--version`: Show version information.
+*   `-v, --verbose`: Enable verbose output.
+*   `-o, --output <path>`: Write output to a file instead of the console.
+*   `--format <fmt>`: Specify the output format. Options: `text`, `json`, `csv`, `markdown`.
+*   `--pretty-print`: Enable pretty printing for JSON output.
+
+### Input Source Options
+
+*   `-f, --file <path>`: Specify a log file. Can be used multiple times.
+*   `-d, --directory <path>`: Specify a directory of log files.
+*   `-r, --recursive`: Scan directories recursively. Must be specified before `-d`.
+*   `--stdin`: Read log data from standard input.
+*   You can also specify input files as positional arguments.
+
+### Filtering Options
+
+*   `-l, --level <level>`: Filter by minimum log level (e.g., `INFO`, `ERROR`).
+*   `-k, --keyword <word>`: Filter entries containing a specific keyword.
+*   `--regex-filter <pat>`: Filter entries where the message matches a regex pattern.
+*   `--start-time <ts>`: Filter entries occurring after a given timestamp (ISO 8601 format).
+*   `--end-time <ts>`: Filter entries occurring before a given timestamp (ISO 8601 format).
+
+### Command-Specific Options
+
+#### `analyze`
+*   `--top-errors <N>`: Show the top N most frequent error messages.
+
+#### `entries`
+*   `--limit <N>`: Output only the first N matching entries.
+*   `--tail <N>`: Output only the last N matching entries.
+
+### Examples
+
+*   **Analyze a log file for errors and warnings:**
+    ```bash
+    ./build/logAnalyzer analyze -f data/sample.log --level WARNING
+    ```
+
+*   **List the last 20 critical entries from a directory in JSON format:**
+    ```bash
+    ./build/logAnalyzer entries -d /var/log/my_app --recursive --level CRITICAL --tail 20 --format json --pretty-print
+    ```
+
+*   **Tail a log file in real-time:**
+    ```bash
+    ./build/logAnalyzer tail -f data/sample.log
+    ```
+
+*   **Filter logs from stdin between two times and save to a file:**
+    ```bash
+    cat data/sample.log | ./build/logAnalyzer entries --stdin --start-time "2023-10-26T10:00:00Z" --end-time "2023-10-26T12:00:00Z" -o filtered.log
+    ```
+
 ## Run Instructions
 
-After a successful build, the executable will be located in the `build` directory.
+After a successful build, the main executable `logAnalyzer` will be located in the `build` directory. You can run it directly from there, providing the desired commands and options as described above.
 
 ```bash
-./logAnalyzer
+# Show the help message to see all available options
+./build/logAnalyzer --help
 ```
 
 ## Running Tests
