@@ -107,6 +107,10 @@ struct LogValue : LogValueBase {
     template <typename Rep, typename Period>
     LogValue(std::chrono::duration<Rep, Period> d) : LogValueBase(std::chrono::duration_cast<std::chrono::nanoseconds>(d)) {}
 
+    // Iteration 16: Convenience constructors for LogList and LogObject from initializer lists
+    LogValue(std::initializer_list<LogValue> init_list);
+    LogValue(std::initializer_list<std::pair<const char*, LogValue>> init_list);
+
     // New: Type inspection methods
     ValueType type() const noexcept;
     bool is(ValueType t) const noexcept;
@@ -225,6 +229,7 @@ struct LogEntry {
     static const JsonOptions defaultJsonOptions;
 
     // Existing fields (Public API Compat)
+    [[deprecated("Use LogEntry::time_point for the canonical timestamp and LogEntry::generatedTimestampString() or LogEntry::formatTimestamp() for formatted string output.")]]
     std::string timestamp;
     LogLevel level = LogLevel::UNKNOWN;
     std::string message;
@@ -300,6 +305,19 @@ struct LogEntry {
     // Fluent API
     LogEntry& withLevel(LogLevel l);
     LogEntry& withMessage(std::string_view msg);
+    /**
+     * @brief Sets the message using a format string, similar to C++20's std::format.
+     *        This is an alias for withStructuredMessage and also extracts positional arguments
+     *        into log attributes (arg0, arg1, etc.).
+     * @param format The format string with placeholders.
+     * @param args The arguments to format and potentially extract as attributes.
+     * @return Reference to the LogEntry for chaining.
+     */
+    template <typename... Args>
+    LogEntry& withMessageFormat(std::string_view format, Args&&... args) {
+        // Delegates directly to the existing withStructuredMessage implementation
+        return withStructuredMessage(format, std::forward<Args>(args)...);
+    }
     /**
      * @brief Sets the message using a structured format string, automatically extracting arguments as attributes.
      *        Similar to C++20's std::format, where {} placeholders can become attributes.
@@ -388,7 +406,16 @@ struct LogEntry {
     LogEntry clonedWithoutTag(std::string_view tag_name) const;
     LogEntry clonedWithoutTags() const;
 
-    LogEntry& withException(const std::exception& e);
+    LogEntry& withException(const std::exception& e, bool include_stack_trace = true);
+
+    /**
+     * @brief Captures details from a nested exception, recursively extracting all
+     *        nested 'what()' messages and types, optionally including a stack trace.
+     * @param e The nested exception object to capture.
+     * @param include_stack_trace If true, captures the current call stack and adds it as an attribute.
+     * @return Reference to the LogEntry for chaining.
+     */
+    LogEntry& withException(const std::nested_exception& e, bool include_stack_trace = true);
     LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
     LogEntry& withSystemLoad();  // New: Captures system load averages
     LogEntry& withMemoryUsage(); // New: Captures current process RSS
