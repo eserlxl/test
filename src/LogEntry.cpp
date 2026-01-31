@@ -16,6 +16,7 @@
 #include <sys/resource.h> // For getrusage on Unix
 #include <sys/sysinfo.h> // For get_load_statistics on Linux
 #include <fstream> // For reading /proc files
+#include <unordered_set> // New: Required for std::unordered_set
 #endif
 
 // Static mutable variable for default JsonOptions
@@ -24,6 +25,9 @@ namespace { // Anonymous namespace for internal linkage
     std::optional<LogEntry::HostNameProvider> s_hostNameProvider;
     std::optional<LogEntry::AppNameProvider> s_appNameProvider;
 }
+
+// Definition for the thread-local context stack
+thread_local std::vector<ContextFrame> current_context_stack;
 
 const LogEntry::JsonOptions LogEntry::defaultJsonOptions;
 
@@ -54,6 +58,40 @@ void LogEntry::resetAppNameProvider() {
 }
 
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
+
+// LogContext::Scope implementations
+namespace LogContext {
+    Scope::Scope(std::map<std::string, LogValue> attributes,
+                 std::unordered_set<std::string> tags) {
+        current_context_stack.push_back({std::move(attributes), std::move(tags)});
+    }
+
+    Scope::~Scope() {
+        if (!current_context_stack.empty()) {
+            current_context_stack.pop_back();
+        }
+    }
+
+    void apply(LogEntry& entry) {
+        if (current_context_stack.empty()) {
+            return;
+        }
+
+        // Apply attributes: inner scopes override outer ones
+        for (const auto& frame : current_context_stack) {
+            for (const auto& [key, value] : frame.attributes) {
+                entry.withAttribute(key, value); // withAttribute will overwrite existing
+            }
+        }
+
+        // Apply tags: cumulative
+        for (const auto& frame : current_context_stack) {
+            for (const auto& tag : frame.tags) {
+                entry.withTag(tag); // withTag will add if not exists
+            }
+        }
+    }
+} // namespace LogContext
 
 // LogValue helpers
 LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
@@ -399,6 +437,7 @@ LogEntry LogEntry::create(LogLevel level, std::string_view message, std::source_
     entry.message = message;
     entry.withSource(loc);
     entry.withMetadata();
+    LogContext::apply(entry); // Apply thread-local context
     return entry;
 }
 
@@ -528,6 +567,11 @@ LogEntry& LogEntry::withAttribute(std::string_view key, LogObject value) {
 
 LogEntry& LogEntry::withThreadName(std::string_view name) {
     thread_name = name;
+    return *this;
+}
+
+LogEntry& LogEntry::withEventId(std::string_view eventId) {
+    event_id = eventId;
     return *this;
 }
 
@@ -1598,6 +1642,11 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
             if (auto s_ptr = value.asString())
                 entry.app_name = **s_ptr; // Corrected
         }
+        else if (key == "event_id") // New: Handle event_id
+        {
+            if (auto s_ptr = value.asString())
+                entry.event_id = **s_ptr;
+        }
         else if (key == "thread_id")
         {
             if (auto s_ptr = value.asString())
@@ -1877,6 +1926,13 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
             if (!val_res)
                 return std::unexpected("Failed to parse app_name: " + val_res.error());
             entry.app_name = *val_res;
+        }
+        else if (key == "event_id") // New: Handle event_id
+        {
+            auto val_res = parseJsonString(it, end);
+            if (!val_res)
+                return std::unexpected("Failed to parse event_id: " + val_res.error());
+            entry.event_id = *val_res;
         }
         else if (key == "source")
         {
@@ -2251,6 +2307,8 @@ std::string LogEntry::toJson(const JsonOptions &options) const
         writeField("host_name", escapeJson(host_name));
     if (!app_name.empty())
         writeField("app_name", escapeJson(app_name));
+    if (!event_id.empty()) // New: include event_id
+        writeField("event_id", escapeJson(event_id));
 
     if (options.include_source && (!source_file.empty() || !source_function.empty() || source_line != 0))
     {
@@ -2357,7 +2415,11 @@ std::strong_ordering LogEntry::operator<=>(const LogEntry &other) const
     }
 
     // Tie-breaker: message
-    return message <=> other.message;
+    auto msg_cmp = message <=> other.message;
+    if (msg_cmp != 0) return msg_cmp;
+
+    // Tie-breaker: event_id
+    return event_id <=> other.event_id;
 }
 
 bool LogEntry::operator==(const LogEntry &other) const
@@ -2394,6 +2456,7 @@ namespace std {
         hash_combine(seed, entry.thread_name);
         hash_combine(seed, entry.trace_id);
         hash_combine(seed, entry.span_id);
+        hash_combine(seed, entry.event_id); // New: Hash event_id
 
         // Hash time_point (use count for nanoseconds precision)
         hash_combine(seed, entry.time_point.time_since_epoch().count());

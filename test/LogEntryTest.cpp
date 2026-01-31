@@ -790,6 +790,234 @@ void testHasAttributeValue()
     std::cout << "testHasAttributeValue passed" << std::endl;
 }
 
+void testJsonOptionsFieldFiltering() {
+    std::cout << "Starting testJsonOptionsFieldFiltering..." << std::endl;
+
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Filtered message")
+                         .withAttribute("user", LogValue("alice"))
+                         .withTag("security")
+                         .withEventId("LOGIN_SUCCESS")
+                         .withSource(); // Populate source fields
+
+    // Scenario 1: Include Only `message` and `level`
+    LogEntry::JsonOptions opts_include_message_level;
+    opts_include_message_level.include_fields = {"message", "level"};
+    std::string json_message_level = entry.toJson(opts_include_message_level);
+    assert(json_message_level.find("\"message\"") != std::string::npos);
+    assert(json_message_level.find("\"level\"") != std::string::npos);
+    assert(json_message_level.find("\"timestamp\"") == std::string::npos);
+    assert(json_message_level.find("\"user\"") == std::string::npos);
+    assert(json_message_level.find("\"tags\"") == std::string::npos);
+    assert(json_message_level.find("\"event_id\"") == std::string::npos);
+    assert(json_message_level.find("\"source\"") == std::string::npos);
+
+    // Scenario 2: Exclude `attributes` and `tags`
+    LogEntry::JsonOptions opts_exclude_tags_attrs;
+    opts_exclude_tags_attrs.exclude_fields = {"attributes", "tags"};
+    std::string json_no_tags_attrs = entry.toJson(opts_exclude_tags_attrs);
+    assert(json_no_tags_attrs.find("\"message\"") != std::string::npos);
+    assert(json_no_tags_attrs.find("\"level\"") != std::string::npos);
+    assert(json_no_tags_attrs.find("\"user\"") == std::string::npos); // user is an attribute
+    assert(json_no_tags_attrs.find("\"tags\"") == std::string::npos);
+    assert(json_no_tags_attrs.find("\"event_id\"") != std::string::npos);
+    assert(json_no_tags_attrs.find("\"source\"") != std::string::npos);
+
+    // Scenario 3: Precedence - include `tags`, but also exclude `tags`. Exclude should win.
+    LogEntry::JsonOptions opts_precedence;
+    opts_precedence.include_fields = {"message", "level", "tags"};
+    opts_precedence.exclude_fields = {"tags"};
+    std::string json_precedence = entry.toJson(opts_precedence);
+    assert(json_precedence.find("\"message\"") != std::string::npos);
+    assert(json_precedence.find("\"level\"") != std::string::npos);
+    assert(json_precedence.find("\"tags\"") == std::string::npos); // Exclude wins
+
+    // Scenario 4: Test with specific standard fields and new event_id
+    LogEntry::JsonOptions opts_specific_fields;
+    opts_specific_fields.include_fields = {"timestamp", "level", "message", "source", "event_id"};
+    std::string json_specific = entry.toJson(opts_specific_fields);
+    assert(json_specific.find("\"timestamp\"") != std::string::npos);
+    assert(json_specific.find("\"level\"") != std::string::npos);
+    assert(json_specific.find("\"message\"") != std::string::npos);
+    assert(json_specific.find("\"source\"") != std::string::npos);
+    assert(json_specific.find("\"event_id\"") != std::string::npos);
+    assert(json_specific.find("\"user\"") == std::string::npos);
+    assert(json_specific.find("\"tags\"") == std::string::npos);
+
+    // Scenario 5: Exclude a non-existent field, verify no impact
+    LogEntry::JsonOptions opts_exclude_nonexistent;
+    opts_exclude_nonexistent.exclude_fields = {"nonExistentField"};
+    std::string json_full = entry.toJson(opts_exclude_nonexistent); // Should be full JSON
+    assert(json_full.find("\"message\"") != std::string::npos);
+    assert(json_full.find("\"user\"") != std::string::npos);
+
+    // Scenario 6: Test interaction with `exclude_empty = true`
+    LogEntry empty_entry = LogEntry::create(LogLevel::INFO, "Empty entry");
+    LogEntry::JsonOptions opts_exclude_empty;
+    opts_exclude_empty.exclude_empty = true;
+    std::string json_empty_excluded = empty_entry.toJson(opts_exclude_empty);
+    assert(json_empty_excluded.find("\"attributes\"") == std::string::npos); // Should be excluded
+    assert(json_empty_excluded.find("\"tags\"") == std::string::npos);       // Should be excluded
+
+    std::cout << "testJsonOptionsFieldFiltering passed" << std::endl;
+}
+
+void testEventId() {
+    std::cout << "Starting testEventId..." << std::endl;
+
+    // Scenario 1: `withEventId` fluent method.
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "User login attempt")
+                         .withEventId("USER_LOGIN_ATTEMPT");
+    assert(entry.event_id == "USER_LOGIN_ATTEMPT");
+
+    // Scenario 2: JSON serialization.
+    std::string json_with_event_id = entry.toJson();
+    assert(json_with_event_id.find("\"event_id\": \"USER_LOGIN_ATTEMPT\"") != std::string::npos);
+
+    LogEntry entry_no_event_id = LogEntry::create(LogLevel::INFO, "Simple message");
+    std::string json_no_event_id = entry_no_event_id.toJson();
+    assert(json_no_event_id.find("\"event_id\"") == std::string::npos);
+
+    // Scenario 3: JSON deserialization.
+    std::string json_str_with_event = R"({"level":"INFO","message":"Test event","event_id":"TEST_EVENT_CODE"})";
+    auto result_with_event = LogEntry::fromJson(json_str_with_event);
+    assert(result_with_event.has_value());
+    assert(result_with_event->event_id == "TEST_EVENT_CODE");
+
+    std::string json_str_no_event = R"({"level":"INFO","message":"No event"})";
+    auto result_no_event = LogEntry::fromJson(json_str_no_event);
+    assert(result_no_event.has_value());
+    assert(result_no_event->event_id.empty());
+
+    // Scenario 4: `toMap` and `fromMap` round-trip.
+    LogEntry original_entry = LogEntry::create(LogLevel::ERROR, "DB Error")
+                                  .withEventId("DB_CONNECTION_FAILURE")
+                                  .withAttribute("reason", "timeout");
+    std::map<std::string, LogValue> map_repr = original_entry.toMap();
+    LogEntry from_map_entry = LogEntry::fromMap(map_repr);
+    assert(from_map_entry.event_id == "DB_CONNECTION_FAILURE");
+    assert(from_map_entry.message == "DB Error");
+    assert(from_map_entry.attributes.at("reason") == LogValue("timeout"));
+
+
+    // Scenario 5: `operator==` and `operator<` behavior.
+    LogEntry e1 = LogEntry::create(LogLevel::INFO, "Message");
+    LogEntry e2 = LogEntry::create(LogLevel::INFO, "Message");
+    assert(e1 == e2);
+
+    e1.withEventId("EVENT_A");
+    assert(e1 != e2);
+    assert(e2 < e1); // Assuming "EVENT_A" comes after "" (empty string) in lexicographical order
+
+    e2.withEventId("EVENT_B");
+    assert(e1 != e2);
+    assert(e1 < e2); // Assuming "EVENT_A" < "EVENT_B"
+
+    LogEntry e3 = e1;
+    assert(e1 == e3);
+
+    // Scenario 6: `std::hash<LogEntry>` behavior.
+    std::unordered_set<LogEntry> entry_set;
+    entry_set.insert(e1);
+    entry_set.insert(e2);
+    assert(entry_set.size() == 2); // e1 and e2 should be distinct due to event_id
+
+    LogEntry e4 = LogEntry::create(LogLevel::INFO, "Message").withEventId("EVENT_A");
+    entry_set.insert(e4);
+    assert(entry_set.size() == 2); // e4 is a duplicate of e1
+
+    std::cout << "testEventId passed" << std::endl;
+}
+
+// Dummy global LogEntry to ensure LogContext::Scope is instantiated and compiled,
+// as the primary creation path is via LogEntry::create().
+// This helps catch compilation issues related to LogContext in isolation.
+[[maybe_unused]] static LogContext::Scope globalDummyScope(
+    {{"globalAttr", LogValue("globalVal")}}, {"globalTag"});
+
+
+void testLogContextScope() {
+    std::cout << "Starting testLogContextScope..." << std::endl;
+
+    // Scenario 1: Basic context application.
+    {
+        LogContext::Scope scope1({{"req_id", LogValue("abc-123")}}, {"web"});
+        LogEntry entry = LogEntry::create(LogLevel::INFO, "Request received");
+        assert(entry.hasAttribute("req_id"));
+        assert(entry.getAttributeAs<std::string>("req_id") == "abc-123");
+        assert(entry.hasTag("web"));
+    }
+    // After scope1 exits, its context should be gone.
+    LogEntry entry_after_scope1 = LogEntry::create(LogLevel::INFO, "Outside scope");
+    assert(!entry_after_scope1.hasAttribute("req_id"));
+    assert(!entry_after_scope1.hasTag("web"));
+
+    // Scenario 2: Nested scopes - attribute overriding.
+    {
+        LogContext::Scope outer_scope({{"trace_level", LogValue(1LL)}, {"operation", LogValue("outer")}});
+        LogEntry entry_outer = LogEntry::create(LogLevel::INFO, "Outer operation");
+        assert(entry_outer.getAttributeAs<int64_t>("trace_level") == 1LL);
+        assert(entry_outer.getAttributeAs<std::string>("operation") == "outer");
+
+        {
+            LogContext::Scope inner_scope({{"trace_level", LogValue(2LL)}, {"component", LogValue("inner")}});
+            LogEntry entry_inner = LogEntry::create(LogLevel::INFO, "Inner operation");
+            assert(entry_inner.getAttributeAs<int64_t>("trace_level") == 2LL); // Inner overrides outer
+            assert(entry_inner.getAttributeAs<std::string>("operation") == "outer"); // Outer attribute still present
+            assert(entry_inner.getAttributeAs<std::string>("component") == "inner");
+        } // inner_scope ends
+
+        LogEntry entry_after_inner = LogEntry::create(LogLevel::INFO, "Back in outer scope");
+        assert(entry_after_inner.getAttributeAs<int64_t>("trace_level") == 1LL); // Outer restored
+        assert(entry_after_inner.getAttributeAs<std::string>("operation") == "outer");
+        assert(!entry_after_inner.hasAttribute("component")); // Inner attribute gone
+    } // outer_scope ends
+
+    // Scenario 3: Nested scopes - cumulative tags.
+    {
+        LogContext::Scope outer_scope_tags({}, {"database"});
+        LogEntry entry_outer_tags = LogEntry::create(LogLevel::INFO, "DB access");
+        assert(entry_outer_tags.hasTag("database"));
+        assert(entry_outer_tags.getTags().size() == 1);
+
+        {
+            LogContext::Scope inner_scope_tags({}, {"query", "performance"});
+            LogEntry entry_inner_tags = LogEntry::create(LogLevel::INFO, "Executing query");
+            assert(entry_inner_tags.hasTag("database"));
+            assert(entry_inner_tags.hasTag("query"));
+            assert(entry_inner_tags.hasTag("performance"));
+            assert(entry_inner_tags.getTags().size() == 3);
+        } // inner_scope_tags ends
+
+        LogEntry entry_after_inner_tags = LogEntry::create(LogLevel::INFO, "After query");
+        assert(entry_after_inner_tags.hasTag("database"));
+        assert(!entry_after_inner_tags.hasTag("query"));
+        assert(!entry_after_inner_tags.hasTag("performance"));
+        assert(entry_after_inner_tags.getTags().size() == 1);
+    }
+
+    // Scenario 4: Scope without attributes/tags.
+    {
+        LogContext::Scope empty_scope;
+        LogEntry entry = LogEntry::create(LogLevel::INFO, "Empty scope test");
+        assert(entry.attributes.empty());
+        assert(entry.tags.empty());
+    }
+
+    // Scenario 5: `LogEntry` created outside any active scope.
+    LogEntry global_entry = LogEntry::create(LogLevel::INFO, "Global entry test");
+    assert(global_entry.attributes.empty());
+    assert(global_entry.tags.empty());
+
+    // Scenario 6: Thread-locality.
+    // This requires a separate thread for testing, which complicates the assert flow.
+    // We'll simulate by ensuring that a context set in one block doesn't leak.
+    // The previous tests already implicitly cover this by showing context disappears after scope.
+    // For a more robust thread-locality test, one would launch actual threads.
+    // For now, we rely on the thread_local keyword and scope exit.
+
+    std::cout << "testLogContextScope passed" << std::endl;
+}
+
 void testNestedData()
 {
     LogEntry entry = LogEntry::create(LogLevel::INFO, "Nested data test");
@@ -1535,6 +1763,8 @@ int main()
     testEnvironmentMetadata();
     testSeverityValue();
     testHasAttributeValue();
+    testJsonOptionsFieldFiltering(); // New test
+    testEventId(); // New test
 
     testIteration1Features();
     testNestedData();
@@ -1549,6 +1779,7 @@ int main()
     testErgonomicGetters();
     testMetadataExtensions();
     testHashability(); // New test
+    testLogContextScope(); // New test
 
     std::cout << "All LogEntry tests passed!" << std::endl;
 

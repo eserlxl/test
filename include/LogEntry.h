@@ -14,6 +14,7 @@
 #include <thread>
 #include <type_traits>
 #include <set>
+#include <unordered_set>
 #include <optional>
 #include <functional>
 #include <initializer_list>
@@ -154,6 +155,67 @@ namespace std {
     };
 } // namespace std
 
+// Forward declarations for internal implementation details of LogContext.
+struct ContextFrame {
+    std::map<std::string, LogValue> attributes;
+    std::unordered_set<std::string> tags; // Use unordered_set for faster lookups during merging
+};
+
+// Thread-local stack to manage nested contexts.
+extern thread_local std::vector<ContextFrame> current_context_stack;
+
+namespace LogContext {
+    /**
+     * @brief RAII scope guard for applying contextual attributes and tags to LogEntry objects.
+     *
+     * When a LogContext::Scope object is constructed, it pushes its provided attributes and tags
+     * onto a thread-local context stack. These attributes and tags are then automatically
+     * applied to any LogEntry created via LogEntry::create() within this scope.
+     *
+     * If an attribute key already exists in an outer scope, the attribute provided by
+     * this inner scope will temporarily override it. Tags are cumulative.
+     *
+     * When the LogContext::Scope object is destroyed (e.g., when it goes out of scope),
+     * its associated attributes and tags are popped from the stack, restoring the previous context.
+     *
+     * This mechanism is strictly thread-local; context set in one thread does not affect others.
+     */
+    class Scope {
+    public:
+        /**
+         * @brief Constructs a new LogContext::Scope and pushes context onto the stack.
+         * @param attributes A map of attributes to apply within this scope.
+         * @param tags A set of tags to apply within this scope.
+         */
+        Scope(std::map<std::string, LogValue> attributes = {},
+              std::unordered_set<std::string> tags = {});
+
+        /**
+         * @brief Destroys the LogContext::Scope and pops its context from the stack.
+         */
+        ~Scope();
+
+        // Disallow copying and moving to ensure correct RAII management of the context stack.
+        // Copying or moving a Scope object would lead to incorrect stack behavior and potential memory issues.
+        Scope(const Scope&) = delete;
+        Scope& operator=(const Scope&) = delete;
+        Scope(Scope&&) = delete;
+        Scope& operator=(Scope&&) = delete;
+    };
+
+    /**
+     * @brief Applies all active attributes and tags from the thread-local context stack to the given LogEntry.
+     *
+     * This function is intended for internal use, primarily called by LogEntry::create().
+     * It iterates through the current_context_stack and merges all attributes and tags
+     * into the provided LogEntry object, respecting attribute overrides from inner scopes.
+     *
+     * @param entry The LogEntry object to apply context to.
+     */
+    void apply(LogEntry& entry);
+
+} // namespace LogContext
+
 struct LogEntry {
     // Using declarations to make external structs accessible via LogEntry::
     using JsonOptions = LogEntryJsonOptions;
@@ -167,6 +229,7 @@ struct LogEntry {
     LogLevel level = LogLevel::UNKNOWN;
     std::string message;
     std::string raw_line;
+    std::string event_id; // New: Dedicated event identifier
 
     // New fields
     std::chrono::system_clock::time_point time_point;
@@ -309,6 +372,7 @@ struct LogEntry {
     LogEntry& withThreadId(std::string_view tid);
     LogEntry& withThreadId(std::thread::id tid);
     LogEntry& withThreadName(std::string_view name); // New
+    LogEntry& withEventId(std::string_view eventId); // New: Fluent method to set event_id
     LogEntry& withTimestamp(std::chrono::system_clock::time_point tp, bool include_fractional = true);
     LogEntry& withSource(std::source_location loc = std::source_location::current());
     LogEntry& withTag(std::string_view tag);
