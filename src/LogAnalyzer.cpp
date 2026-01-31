@@ -1167,9 +1167,9 @@ bool LogAnalysis::RegexAnonymizer::anonymize(::LogEntry &entry) const
 // --- LogAnalyzer Implementation ---
 
 LogAnalysis::LogAnalyzer::LogAnalyzer() 
-    : rw_mutex_ptr_(std::make_unique<std::shared_mutex>()), 
-      legacy_timestamp_regex_(R"(\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\]?)"),
-      legacy_level_regex_(R"(\[?(DEBUG|INFO|WARNING|WARN|ERROR|ERR|CRITICAL|CRIT|FATAL)\]?)")
+    : legacy_timestamp_regex_(R"(\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\]?)"), 
+      legacy_level_regex_(R"(\[?(DEBUG|INFO|WARNING|WARN|ERROR|ERR|CRITICAL|CRIT|FATAL)\]?)"),
+      rw_mutex_ptr_(std::make_unique<std::shared_mutex>())
 {
     // stop_tailing_ptr_ is already initialized with make_unique in header
 }
