@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.15...3.27)
-project(gemini-cli LANGUAGES CXX)
+project(gemini-cli
+    VERSION 1.0.0
+    DESCRIPTION "A command-line tool for analyzing log files"
+    LANGUAGES CXX)
 
 set(GEMINI_CLI_CXX_STANDARD 23 CACHE STRING "C++ standard to use for building (e.g., 20, 23, 26)")
 set(CMAKE_CXX_STANDARD ${GEMINI_CLI_CXX_STANDARD})
