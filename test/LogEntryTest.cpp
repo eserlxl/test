@@ -226,19 +226,19 @@ void testStreamOperator()
 void testSeverityChecks()
 {
 
-    assert(isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
+    assert(LogEntry::isAtLeast(LogLevel::ERROR, LogLevel::WARNING));
 
-    assert(isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
+    assert(LogEntry::isAtLeast(LogLevel::WARNING, LogLevel::WARNING));
 
-    assert(!isAtLeast(LogLevel::INFO, LogLevel::WARNING));
+    assert(!LogEntry::isAtLeast(LogLevel::INFO, LogLevel::WARNING));
 
-    assert(isError(LogLevel::ERROR));
+    assert(LogEntry::isError(LogLevel::ERROR));
 
-    assert(isError(LogLevel::CRITICAL));
+    assert(LogEntry::isError(LogLevel::CRITICAL));
 
-    assert(!isError(LogLevel::WARNING));
+    assert(!LogEntry::isError(LogLevel::WARNING));
 
-    assert(!isError(LogLevel::INFO));
+    assert(!LogEntry::isError(LogLevel::INFO));
 
     std::cout << "testSeverityChecks passed" << std::endl;
 }
@@ -377,47 +377,170 @@ void testJsonDeserialization()
 
 void testCloning()
 {
-    LogEntry entry = LogEntry::create(LogLevel::INFO, "Original");
-    entry.withTag("original_tag");
+    std::cout << "Starting testCloning..." << std::endl;
+    LogEntry original = LogEntry::create(LogLevel::INFO, "Original Message");
+    original.withTag("original_tag")
+            .withAttribute("initial_attr", "value1")
+            .withAttribute("attr_to_remove", 123LL);
 
-    LogEntry clone = entry.clonedWithTag("new_tag");
-    assert(clone.hasTag("original_tag"));
-    assert(clone.hasTag("new_tag"));
-    assert(!entry.hasTag("new_tag")); // Original should be unmodified
+    // Test clonedWithTag (already exists)
+    LogEntry clone_with_tag = original.clonedWithTag("new_tag");
+    assert(clone_with_tag.hasTag("original_tag"));
+    assert(clone_with_tag.hasTag("new_tag"));
+    assert(!original.hasTag("new_tag")); // Original unmodified
+
+    // Test clonedWithLevel
+    LogEntry clone_with_level = original.clonedWithLevel(LogLevel::ERROR);
+    assert(clone_with_level.level == LogLevel::ERROR);
+    assert(original.level == LogLevel::INFO); // Original unmodified
+
+    // Test clonedWithMessage
+    LogEntry clone_with_message = original.clonedWithMessage("Modified Message");
+    assert(clone_with_message.message == "Modified Message");
+    assert(original.message == "Original Message"); // Original unmodified
+
+    // Test clonedWithAttribute
+    LogEntry clone_with_new_attr = original.clonedWithAttribute("new_attr", LogValue("new_value"));
+    assert(clone_with_new_attr.hasAttribute("new_attr"));
+    assert(clone_with_new_attr.getAttributeAs<std::string>("new_attr") == "new_value");
+    assert(!original.hasAttribute("new_attr")); // Original unmodified
+
+    LogEntry clone_with_updated_attr = original.clonedWithAttribute("initial_attr", LogValue("updated_value"));
+    assert(clone_with_updated_attr.getAttributeAs<std::string>("initial_attr") == "updated_value");
+    assert(original.getAttributeAs<std::string>("initial_attr") == "value1"); // Original unmodified
+
+    // Test clonedWithAttributes
+    std::map<std::string, LogValue> new_attrs = {
+        {"batch_attr1", 100LL},
+        {"batch_attr2", true}
+    };
+    LogEntry clone_with_batch_attrs = original.clonedWithAttributes(new_attrs);
+    assert(clone_with_batch_attrs.hasAttribute("batch_attr1"));
+    assert(clone_with_batch_attrs.hasAttribute("batch_attr2"));
+    assert(clone_with_batch_attrs.hasAttribute("initial_attr")); // Existing attributes should be preserved
+    assert(!original.hasAttribute("batch_attr1")); // Original unmodified
+
+    // Test clonedWithoutAttribute
+    LogEntry clone_without_attr = original.clonedWithoutAttribute("attr_to_remove");
+    assert(!clone_without_attr.hasAttribute("attr_to_remove"));
+    assert(original.hasAttribute("attr_to_remove")); // Original unmodified
 
     std::cout << "testCloning passed" << std::endl;
 }
 
+void testTagManagement() {
+    std::cout << "Starting testTagManagement..." << std::endl;
+
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Tag management test");
+    entry.withTag("tag1").withTag("tag2").withTag("tag3");
+
+    // Test getTags
+    const auto& tags = entry.getTags();
+    assert(tags.size() == 3);
+    assert(tags.count("tag1") == 1);
+    assert(tags.count("tag2") == 1);
+    assert(tags.count("tag3") == 1);
+    assert(tags.count("non_existent") == 0);
+
+    // Test hasAllTags
+    assert(entry.hasAllTags({"tag1", "tag2"}));
+    assert(!entry.hasAllTags({"tag1", "non_existent"}));
+    assert(entry.hasAllTags({})); // Always true for empty list
+
+    // Test hasAnyTag
+    assert(entry.hasAnyTag({"tag1", "non_existent"}));
+    assert(!entry.hasAnyTag({"non_existent1", "non_existent2"}));
+    assert(!entry.hasAnyTag({})); // Always false for empty list
+
+    // Test removeTag
+    entry.removeTag("tag2");
+    assert(entry.getTags().size() == 2);
+    assert(!entry.hasTag("tag2"));
+    assert(entry.hasTag("tag1"));
+
+    // Remove non-existent tag (should do nothing)
+    entry.removeTag("non_existent");
+    assert(entry.getTags().size() == 2);
+
+    // Test clearTags
+    entry.clearTags();
+    assert(entry.getTags().empty());
+
+    // Re-add tags for cloned tests
+    entry.withTag("clone_tag1").withTag("clone_tag2");
+
+    // Test clonedWithoutTag
+    LogEntry clone_without_one = entry.clonedWithoutTag("clone_tag1");
+    assert(!clone_without_one.hasTag("clone_tag1"));
+    assert(clone_without_one.hasTag("clone_tag2"));
+    assert(entry.hasTag("clone_tag1")); // Original untouched
+
+    // Test clonedWithoutTags
+    LogEntry clone_without_all = entry.clonedWithoutTags();
+    assert(clone_without_all.getTags().empty());
+    assert(!entry.getTags().empty()); // Original untouched
+
+    std::cout << "testTagManagement passed" << std::endl;
+}
+
 void testToMapRoundTrip()
 {
+    std::cout << "Starting testToMapRoundTrip..." << std::endl;
     LogEntry original = LogEntry::create(LogLevel::INFO, "Map Round Trip Test");
     original.withAttribute("int_attr", int64_t{123})
         .withAttribute("double_attr", 45.67)
         .withAttribute("bool_attr", true)
         .withTag("map_test")
+        .withTag("another_tag")
         .withProcessId(54321)
         .withHost("test-host")
         .withApp("test-app")
-        .withTraceContext("trace-xyz", "span-abc");
+        .withThreadName("main-thread") // New field
+        .withTraceContext("trace-xyz", "span-abc")
+        .withSource(__FILE__, __func__, __LINE__); // Populates source_file, func, line
+
+    // Ensure timestamp is generated
+    original.withMetadata();
 
     std::map<std::string, LogValue> map_repr = original.toMap();
     LogEntry from_map = LogEntry::fromMap(map_repr);
 
+    // Basic fields
     assert(from_map.level == original.level);
     assert(from_map.message == original.message);
     assert(from_map.process_id == original.process_id);
     assert(from_map.host_name == original.host_name);
     assert(from_map.app_name == original.app_name);
+    assert(from_map.thread_name == original.thread_name); // Check new thread_name
     assert(from_map.trace_id == original.trace_id);
     assert(from_map.span_id == original.span_id);
-    assert(from_map.getAttributeAs<int64_t>("int_attr") == original.getAttributeAs<int64_t>("int_attr"));
-    assert(from_map.getAttributeAs<double>("double_attr") == original.getAttributeAs<double>("double_attr"));
-    assert(from_map.getAttributeAs<bool>("bool_attr") == original.getAttributeAs<bool>("bool_attr"));
-    // Tags are not currently in toMap, so won't be in fromMap.
-    // assert(from_map.tags == original.tags); // This assertion would fail.
+    
+    // Timestamp
+    // toMap stores timestamp as string, fromMap parses it back to time_point
+    assert(!from_map.timestamp.empty());
+    assert(from_map.time_point == original.time_point);
 
-    // Re-adding tags to map conversion for completeness.
-    // For now, checking the core fields and attributes.
+    // Tags
+    assert(from_map.tags == original.tags); // Now this should pass
+
+    // Nested Source
+    assert(from_map.source_file == original.source_file);
+    assert(from_map.source_function == original.source_function);
+    assert(from_map.source_line == original.source_line);
+
+    // Nested Attributes
+    // Since attributes are nested under "attributes" key in the map,
+    // from_map.attributes should now contain a single LogValue with LogObject type
+    // or should be correctly populated based on fromMap parsing.
+    // My fromMap implementation parses attributes explicitly if the key is "attributes",
+    // otherwise it adds them directly to the entry.attributes.
+    // Since toMap() now nests everything under "attributes", from_map should have:
+    // from_map.attributes should be a direct copy of original.attributes.
+    
+    // Check specific attribute values
+    assert(from_map.attributes.at("int_attr").get<int64_t>() == original.attributes.at("int_attr").get<int64_t>());
+    assert(std::abs(from_map.attributes.at("double_attr").get<double>() - original.attributes.at("double_attr").get<double>()) < 1e-9);
+    assert(from_map.attributes.at("bool_attr").get<bool>() == original.attributes.at("bool_attr").get<bool>());
 
     std::cout << "testToMapRoundTrip passed" << std::endl;
 }
@@ -453,8 +576,125 @@ void testJsonFormatDetection()
     std::cout << "testJsonFormatDetection passed" << std::endl;
 }
 
+void testTimestampUtilities() {
+    std::cout << "Starting testTimestampUtilities..." << std::endl;
+
+    // A known time_point (UTC to avoid local timezone issues for comparison)
+    std::chrono::system_clock::time_point tp;
+    std::tm t = {};
+    t.tm_year = 2023 - 1900;
+    t.tm_mon = 10 - 1; // October (tm_mon is 0-11)
+    t.tm_mday = 15;
+    t.tm_hour = 14;
+    t.tm_min = 30;
+    t.tm_sec = 45;
+    t.tm_isdst = -1; // Not set by system
+
+#if defined(_WIN32) || defined(_WIN64)
+    std::time_t tt = _mkgmtime(&t); // Windows equivalent of timegm
+#else
+    std::time_t tt = timegm(&t); // For UTC time
+#endif
+    tp = std::chrono::system_clock::from_time_t(tt);
+    tp += std::chrono::milliseconds(500); // Add 500ms
+
+    // Test formatTimestamp - ISO8601, Millis, UTC
+    LogEntry::TimestampFormatOptions opts_iso_millis_utc;
+    opts_iso_millis_utc.precision = LogEntry::JsonOptions::Precision::Millis;
+    opts_iso_millis_utc.timezone = LogEntry::JsonOptions::Timezone::UTC;
+    std::string formatted_iso_millis_utc = LogEntry::formatTimestamp(tp, LogEntry::JsonOptions::TimestampFormat::ISO8601, opts_iso_millis_utc);
+    assert(formatted_iso_millis_utc == "2023-10-15T14:30:45.500Z");
+
+    // Test formatTimestamp - ISO8601, Micros, UTC
+    LogEntry::TimestampFormatOptions opts_iso_micros_utc;
+    opts_iso_micros_utc.precision = LogEntry::JsonOptions::Precision::Micros;
+    opts_iso_micros_utc.timezone = LogEntry::JsonOptions::Timezone::UTC;
+    std::string formatted_iso_micros_utc = LogEntry::formatTimestamp(tp, LogEntry::JsonOptions::TimestampFormat::ISO8601, opts_iso_micros_utc);
+    assert(formatted_iso_micros_utc.substr(0, 20) == "2023-10-15T14:30:45."); // Check prefix
+    // The exact microseconds might vary slightly based on system_clock resolution, verify the length and part
+    assert(formatted_iso_micros_utc.length() == strlen("YYYY-MM-DDTHH:MM:SS.xxxxxxZ")); // 27 chars
+    assert(formatted_iso_micros_utc.at(26) == 'Z'); // Ends with Z
+
+    // Test formatTimestamp - ISO8601, Nanos, UTC
+    LogEntry::TimestampFormatOptions opts_iso_nanos_utc;
+    opts_iso_nanos_utc.precision = LogEntry::JsonOptions::Precision::Nanos;
+    opts_iso_nanos_utc.timezone = LogEntry::JsonOptions::Timezone::UTC;
+    std::string formatted_iso_nanos_utc = LogEntry::formatTimestamp(tp, LogEntry::JsonOptions::TimestampFormat::ISO8601, opts_iso_nanos_utc);
+    assert(formatted_iso_nanos_utc.substr(0, 20) == "2023-10-15T14:30:45."); // Check prefix
+    assert(formatted_iso_nanos_utc.length() == strlen("YYYY-MM-DDTHH:MM:SS.xxxxxxxxxZ")); // 30 chars
+    assert(formatted_iso_nanos_utc.at(29) == 'Z'); // Ends with Z
+
+    // Test formatTimestamp - Default, Millis, Local (approximate check due to local time)
+    LogEntry::TimestampFormatOptions opts_default_millis_local;
+    opts_default_millis_local.precision = LogEntry::JsonOptions::Precision::Millis;
+    opts_default_millis_local.timezone = LogEntry::JsonOptions::Timezone::Local;
+    std::string formatted_default_millis_local = LogEntry::formatTimestamp(tp, LogEntry::JsonOptions::TimestampFormat::Default, opts_default_millis_local);
+    // Cannot assert exact string due to local timezone, check format
+    assert(formatted_default_millis_local.find("2023-10-15") != std::string::npos);
+    assert(formatted_default_millis_local.find(":") != std::string::npos);
+    assert(formatted_default_millis_local.find(".") != std::string::npos);
+
+    // Test formatTimestamp - Custom format
+    LogEntry::TimestampFormatOptions opts_custom;
+    opts_custom.custom_format = "%Y/%m/%d %H:%M:%S - Custom";
+    std::string formatted_custom = LogEntry::formatTimestamp(tp, LogEntry::JsonOptions::TimestampFormat::Default, opts_custom);
+    // Exact match is hard due to potential fractional part from LogEntry side, just check structure
+    assert(formatted_custom.find("2023/10/15 14:30:45 - Custom") != std::string::npos); // Adjusted expected custom format string
+
+
+    // Test parseTimestamp (auto-detection)
+    auto parsed_iso = LogEntry::parseTimestamp("2023-10-15T14:30:45.500Z");
+    assert(parsed_iso.has_value());
+    assert(parsed_iso.value() == tp); // Should match original tp
+
+    auto parsed_default = LogEntry::parseTimestamp("2023-10-15 14:30:45.500");
+    // This will depend on the system's local time setting if parseDefaultFormat is local.
+    // Assuming `mktime` (local time) is used for default parsing, create a local time_point for comparison
+    std::tm t_local = {};
+    t_local.tm_year = 2023 - 1900;
+    t_local.tm_mon = 10 - 1; // October
+    t_local.tm_mday = 15;
+    t_local.tm_hour = 14;
+    t_local.tm_min = 30;
+    t_local.tm_sec = 45;
+    t_local.tm_isdst = -1;
+    std::time_t tt_local = std::mktime(&t_local);
+    std::chrono::system_clock::time_point tp_local = std::chrono::system_clock::from_time_t(tt_local);
+    tp_local += std::chrono::milliseconds(500); // Add 500ms
+
+    assert(parsed_default.has_value());
+    assert(parsed_default.value() == tp_local); // Should match local tp
+
+
+    auto parsed_unix = LogEntry::parseTimestamp("1697380245500"); // 2023-10-15 14:30:45.500 UTC
+    assert(parsed_unix.has_value());
+    assert(parsed_unix.value() == tp);
+
+
+    // Test parseTimestamp (specific format)
+    auto parsed_iso_specific = LogEntry::parseTimestamp("2023-10-15T14:30:45.500Z", LogEntry::JsonOptions::TimestampFormat::ISO8601);
+    assert(parsed_iso_specific.has_value());
+    assert(parsed_iso_specific.value() == tp);
+
+    auto parsed_default_specific = LogEntry::parseTimestamp("2023-10-15 14:30:45.500", LogEntry::JsonOptions::TimestampFormat::Default);
+    assert(parsed_default_specific.has_value());
+    assert(parsed_default_specific.value() == tp_local);
+
+    auto parsed_unix_specific = LogEntry::parseTimestamp("1697380245500", LogEntry::JsonOptions::TimestampFormat::UnixMillis);
+    assert(parsed_unix_specific.has_value());
+    assert(parsed_unix_specific.value() == tp);
+
+    // Test invalid parsing
+    assert(!LogEntry::parseTimestamp("invalid").has_value());
+    assert(!LogEntry::parseTimestamp("2023-XX-YY").has_value());
+    assert(!LogEntry::parseTimestamp("12345ab").has_value()); // Invalid UnixMillis
+
+    std::cout << "testTimestampUtilities passed" << std::endl;
+}
+
 void testValidation()
 {
+    std::cout << "Starting testValidation..." << std::endl;
     LogEntry entry;
     assert(!entry.isValid()); // No level, no message
 
@@ -466,6 +706,33 @@ void testValidation()
 
     entry.level = LogLevel::UNKNOWN;
     assert(!entry.isValid()); // Level is UNKNOWN
+    entry.level = LogLevel::INFO; // Reset level for further tests
+
+    // Test: Invalid timestamp string format
+    entry.timestamp = "invalid-time-format";
+    assert(!entry.isValid());
+    entry.timestamp = ""; // Reset
+
+    // Test: Inconsistent timestamp string and time_point
+    entry.message = "Inconsistent Time";
+    entry.timestamp = "2023-01-01 12:00:00.000";
+    // Manually set time_point to a different time
+    entry.time_point = std::chrono::system_clock::time_point(std::chrono::seconds(100)); // A very different time
+    assert(!entry.isValid());
+    entry.time_point = std::chrono::system_clock::time_point(); // Reset time_point
+    entry.timestamp = ""; // Reset timestamp
+
+    // Test: Source info with invalid line number
+    entry.message = "Source test";
+    entry.source_file = "test.cpp";
+    entry.source_function = "testFunc";
+    entry.source_line = 0; // Invalid line number
+    assert(!entry.isValid());
+    entry.source_line = -5; // Also invalid
+    assert(!entry.isValid());
+
+    entry.source_line = 100; // Valid line number
+    assert(entry.isValid());
 
     std::cout << "testValidation passed" << std::endl;
 }
@@ -847,6 +1114,63 @@ void testJsonOptionsIteration1()
     std::cout << "testJsonOptionsIteration1 passed" << std::endl;
 }
 
+void testGlobalConfigAndProviders() {
+    std::cout << "Starting testGlobalConfigAndProviders..." << std::endl;
+
+    // Test default JsonOptions
+    LogEntry entry = LogEntry::create(LogLevel::INFO, "Global config test");
+    std::string default_json = entry.toJson(); // Should use default options
+    assert(default_json.find("\"timestamp\":") != std::string::npos);
+    assert(default_json.find("0x") != std::string::npos); // Default binary encoding is Hex
+
+    // Change default JsonOptions
+    LogEntry::JsonOptions custom_default_opts;
+    custom_default_opts.pretty = true;
+    custom_default_opts.binary_encoding = LogEntry::JsonOptions::BinaryEncoding::Base64;
+    custom_default_opts.timestamp_format = LogEntry::JsonOptions::TimestampFormat::ISO8601;
+    custom_default_opts.precision = LogEntry::JsonOptions::Precision::Nanos;
+    custom_default_opts.timezone = LogEntry::JsonOptions::Timezone::UTC;
+
+    LogEntry::setDefaultJsonOptions(custom_default_opts);
+    assert(LogEntry::getDefaultJsonOptions().pretty == true);
+    assert(LogEntry::getDefaultJsonOptions().binary_encoding == LogEntry::JsonOptions::BinaryEncoding::Base64);
+
+    // Verify toJson() without args uses new defaults
+    std::string custom_default_json = entry.toJson();
+    assert(custom_default_json.find("\n") != std::string::npos); // Pretty printing
+    assert(custom_default_json.find("Z\"") != std::string::npos); // ISO8601 UTC
+    assert(custom_default_json.find("0x") == std::string::npos); // No Hex
+    // Need a binary attribute to properly test base64
+    std::vector<uint8_t> binary_data = {0x01, 0x02, 0x03};
+    entry.withAttribute("binary_test", binary_data);
+    custom_default_json = entry.toJson();
+    assert(custom_default_json.find("\"binary_test\": \"AQID\"") != std::string::npos); // Base64 encoding
+
+    // Test metadata providers
+    std::string test_host = "custom-host";
+    std::string test_app = "custom-app";
+
+    LogEntry::setHostNameProvider([&]() { return test_host; });
+    LogEntry::setAppNameProvider([&]() { return test_app; });
+
+    LogEntry provider_entry;
+    provider_entry.withMetadata(); // Should use providers
+
+    assert(provider_entry.host_name == test_host);
+    assert(provider_entry.app_name == test_app);
+
+    // Reset providers
+    LogEntry::resetHostNameProvider();
+    LogEntry::resetAppNameProvider();
+
+    LogEntry reset_entry;
+    reset_entry.withMetadata(); // Should revert to default behavior
+    assert(reset_entry.host_name == LogEntry::currentHostName()); // Default hostname
+    assert(reset_entry.app_name.empty()); // Default empty app name
+
+    std::cout << "testGlobalConfigAndProviders passed" << std::endl;
+}
+
 void testNumericConversion()
 {
     LogEntry entry;
@@ -907,9 +1231,102 @@ void testNewLogValueTypes()
     std::cout << "testNewLogValueTypes passed" << std::endl;
 }
 
+void testLogValueEnhancements() {
+    std::cout << "Starting testLogValueEnhancements..." << std::endl;
+
+    LogValue val_monostate;
+    LogValue val_bool(true);
+    LogValue val_int64(123LL);
+    LogValue val_uint64(456ULL);
+    LogValue val_double(7.89);
+    LogValue val_string("hello");
+    std::vector<uint8_t> binary_data = {0x01, 0x02, 0x03};
+    LogValue val_binary(binary_data);
+    LogValue val_duration(std::chrono::nanoseconds(100));
+    LogList list_val = {val_int64, val_string};
+    LogValue val_list(list_val);
+    LogObject obj_val = {{"key", val_double}};
+    LogValue val_object(obj_val);
+
+    // Test type() and is(ValueType)
+    assert(val_monostate.type() == ValueType::Monostate);
+    assert(val_monostate.is(ValueType::Monostate));
+    assert(val_monostate.isNull());
+
+    assert(val_bool.type() == ValueType::Bool);
+    assert(val_bool.is(ValueType::Bool));
+    assert(!val_bool.isNull());
+
+    assert(val_int64.type() == ValueType::Int64);
+    assert(val_int64.is(ValueType::Int64));
+
+    assert(val_uint64.type() == ValueType::UInt64);
+    assert(val_uint64.is(ValueType::UInt64));
+
+    assert(val_double.type() == ValueType::Double);
+    assert(val_double.is(ValueType::Double));
+
+    assert(val_string.type() == ValueType::String);
+    assert(val_string.is(ValueType::String));
+
+    assert(val_binary.type() == ValueType::Binary);
+    assert(val_binary.is(ValueType::Binary));
+
+    assert(val_duration.type() == ValueType::Nanoseconds);
+    assert(val_duration.is(ValueType::Nanoseconds));
+
+    assert(val_list.type() == ValueType::List);
+    assert(val_list.is(ValueType::List));
+
+    assert(val_object.type() == ValueType::Object);
+    assert(val_object.is(ValueType::Object));
+
+    // Test is<T>()
+    assert(val_bool.is<bool>());
+    assert(val_int64.is<int64_t>());
+    assert(!val_int64.is<uint64_t>()); // Should not be both
+
+    // Test get<T>()
+    assert(val_bool.get<bool>() == true);
+    assert(val_int64.get<int64_t>() == 123LL);
+    assert(val_string.get<std::string>() == "hello");
+
+    // Test get_if<T>()
+    assert(*val_double.get_if<double>() == 7.89);
+    assert(val_binary.get_if<std::vector<uint8_t>>() != nullptr);
+    assert(val_monostate.get_if<bool>() == nullptr);
+    assert(val_list.get_if<std::shared_ptr<LogList>>() != nullptr);
+    assert(val_object.get_if<std::shared_ptr<LogObject>>() != nullptr);
+
+
+    // Test toString()
+    assert(val_monostate.toString() == "null");
+    assert(val_bool.toString() == "true");
+    assert(val_int64.toString() == "123");
+    
+    // For doubles, due to precision output, comparing with a small epsilon or specific format
+    std::stringstream ss_double;
+    ss_double << std::fixed << std::setprecision(std::numeric_limits<double>::max_digits10) << 7.89;
+    assert(val_double.toString() == ss_double.str());
+
+    assert(val_string.toString() == "\"hello\"");
+    assert(val_binary.toString(LogEntry::JsonOptions::BinaryEncoding::Hex) == "\"0x010203\"");
+    assert(val_binary.toString(LogEntry::JsonOptions::BinaryEncoding::Base64) == "\"AQID\"");
+    assert(val_duration.toString() == "100ns");
+    assert(val_list.toString() == "[123,\"hello\"]");
+    
+    // Object string representation order might not be guaranteed by map, but key/value should be there
+    std::string obj_str = val_object.toString();
+    assert(obj_str.find("\"key\":") != std::string::npos);
+    assert(obj_str.find(ss_double.str()) != std::string::npos); // Value of "key"
+
+    std::cout << "testLogValueEnhancements passed" << std::endl;
+}
+
 void testErgonomicGetters()
 {
     std::cout << "Starting testErgonomicGetters..." << std::endl;
+
     LogEntry entry;
 
     entry.withAttribute("i64_val", int64_t{100});
@@ -1032,11 +1449,69 @@ void testIteration1Features()
     std::cout << "testIteration1Features passed" << std::endl;
 }
 
+void testHashability() {
+    std::cout << "Starting testHashability..." << std::endl;
+
+    // Test LogValue hashability
+    std::unordered_set<LogValue> value_set;
+    LogValue lv1("hello");
+    LogValue lv2(123LL);
+    LogValue lv3("hello"); // Same as lv1
+    LogValue lv4(std::chrono::nanoseconds(100));
+
+    value_set.insert(lv1);
+    value_set.insert(lv2);
+    value_set.insert(lv3); // Should not insert a duplicate
+    value_set.insert(lv4);
+
+    assert(value_set.size() == 3);
+    assert(value_set.count(lv1) == 1);
+    assert(value_set.count(lv2) == 1);
+    assert(value_set.count(lv3) == 1); // Found because it's equal to lv1
+    assert(value_set.count(lv4) == 1);
+    assert(value_set.count(LogValue(124LL)) == 0);
+
+    // Test LogEntry hashability
+    std::unordered_set<LogEntry> entry_set;
+    LogEntry e1 = LogEntry::create(LogLevel::INFO, "message1");
+    e1.withTag("tagA").withAttribute("attr1", "val1");
+
+    LogEntry e2 = LogEntry::create(LogLevel::INFO, "message2");
+    e2.withTag("tagB").withAttribute("attr2", 123LL);
+
+    LogEntry e3 = e1; // Should be equal to e1
+
+    entry_set.insert(e1);
+    entry_set.insert(e2);
+    entry_set.insert(e3); // Should not insert a duplicate
+
+    assert(entry_set.size() == 2);
+    assert(entry_set.count(e1) == 1);
+    assert(entry_set.count(e2) == 1);
+    assert(entry_set.count(e3) == 1); // Found because it's equal to e1
+
+    // Test for different hash for different content
+    LogEntry e4 = LogEntry::create(LogLevel::INFO, "message1");
+    e4.withTag("tagA").withAttribute("attr1", "val2"); // Different attribute value
+    assert(entry_set.count(e4) == 0); // Should not find e4 as it's different
+
+    // Test with unordered_map
+    std::unordered_map<LogEntry, int> entry_map;
+    entry_map[e1] = 1;
+    entry_map[e2] = 2;
+    entry_map[e3] = 3; // Updates value for e1
+
+    assert(entry_map.size() == 2);
+    assert(entry_map.at(e1) == 3); // Value for e1 updated by e3
+    assert(entry_map.at(e2) == 2);
+
+    std::cout << "testHashability passed" << std::endl;
+}
+
 int main()
 {
 
-    testLevelParsing();
-    testLevelToString();
+    testLevelParsing();    testLevelToString();
     testTimeParsing();
     testComparison();
     testFormatting();
@@ -1047,8 +1522,10 @@ int main()
     testTracing();
     testJsonDeserialization();
     testCloning();
+    testTagManagement(); // New test
     testToMapRoundTrip();
     testJsonFormatDetection();
+    testTimestampUtilities(); // New test
     testValidation();
     testEnvironmentMetadata();
     testSeverityValue();
@@ -1058,12 +1535,15 @@ int main()
     testNestedData();
     testWithMetadata();
     testJsonOptionsIteration1();
+    testGlobalConfigAndProviders(); // New test
     testNumericConversion();
 
     // New tests for Iteration 1
     testNewLogValueTypes();
+    testLogValueEnhancements(); // New test
     testErgonomicGetters();
     testMetadataExtensions();
+    testHashability(); // New test
 
     std::cout << "All LogEntry tests passed!" << std::endl;
 

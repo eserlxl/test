@@ -21,6 +21,11 @@
 
 #include <vector> // Required for std::vector<uint8_t>
 
+enum class ValueType {
+    Monostate, String, Int64, UInt64, Double, Bool,
+    Binary, Nanoseconds, List, Object
+};
+
 enum class LogLevel {
     DEBUG = 0,
     INFO = 1,
@@ -30,14 +35,44 @@ enum class LogLevel {
     UNKNOWN = 5
 };
 
-inline bool isAtLeast(LogLevel level, LogLevel minimum) noexcept {
-    if (level == LogLevel::UNKNOWN || minimum == LogLevel::UNKNOWN) return false;
-    return static_cast<int>(level) >= static_cast<int>(minimum);
-}
+// Forward declaration for LogEntry to allow nested types to be defined globally
+struct LogEntry;
 
-inline bool isError(LogLevel level) noexcept {
-    return level == LogLevel::ERROR || level == LogLevel::CRITICAL;
-}
+// Define JsonOptions outside LogEntry to resolve circular dependencies and allow
+// LogValue to reference its enums.
+struct LogEntryJsonOptions {
+    enum class TimestampFormat { Default, ISO8601, UnixMillis };
+    enum class Precision { Seconds, Millis, Micros, Nanos };
+    enum class Timezone { Local, UTC };
+    enum class BinaryEncoding { Hex, Base64 };
+
+    bool pretty = false;
+    bool include_source = true;
+    bool include_thread = true;
+    bool include_tracing = true;
+    bool exclude_empty = false;
+    TimestampFormat timestamp_format = TimestampFormat::Default;
+    Precision precision = Precision::Millis;
+    Timezone timezone = Timezone::UTC;
+    BinaryEncoding binary_encoding = BinaryEncoding::Hex;
+    std::optional<std::string> custom_timestamp_format = std::nullopt;
+
+    bool pretty_structured_data = false;
+    int indent_level = 2;
+
+    std::set<std::string> include_fields;
+    std::set<std::string> exclude_fields;
+
+    bool sanitize_strings = true;
+};
+
+// Define TimestampFormatOptions outside LogEntry
+struct LogEntryTimestampFormatOptions {
+    // Reference to LogEntryJsonOptions::Precision and Timezone
+    LogEntryJsonOptions::Precision precision = LogEntryJsonOptions::Precision::Millis;
+    LogEntryJsonOptions::Timezone timezone = LogEntryJsonOptions::Timezone::Local;
+    std::optional<std::string> custom_format = std::nullopt;
+};
 
 // Supported types for structured data
 struct LogValue;
@@ -71,72 +106,61 @@ struct LogValue : LogValueBase {
     template <typename Rep, typename Period>
     LogValue(std::chrono::duration<Rep, Period> d) : LogValueBase(std::chrono::duration_cast<std::chrono::nanoseconds>(d)) {}
 
-    // New: Type checking methods
-    bool isMonostate() const noexcept;
-    bool isBool() const noexcept;
-    bool isInt64() const noexcept;
-    bool isUint64() const noexcept;
-    bool isDouble() const noexcept;
-    bool isString() const noexcept;
-    bool isBinary() const noexcept;
-    bool isDuration() const noexcept;
+    // New: Type inspection methods
+    ValueType type() const noexcept;
+    bool is(ValueType t) const noexcept;
+    template<typename T> bool is() const noexcept {
+        return std::holds_alternative<T>(*this);
+    }
+    bool isNull() const noexcept;
 
-    // Explicit conversion helpers (now returning std::optional)
-    std::optional<const LogList&> asList() const;
-    std::optional<const LogObject&> asObject() const;
+    // Explicit conversion helpers (now returning std::optional<T*>, not T&)
+    std::optional<const LogList*> asList() const;
+    std::optional<const LogObject*> asObject() const;
 
     // New: Accessors for specific types (returning std::optional<T>)
     std::optional<bool> asBool() const;
     std::optional<int64_t> asInt64() const;
     std::optional<uint64_t> asUint64() const;
     std::optional<double> asDouble() const;
-    std::optional<const std::string&> asString() const;
-    std::optional<const std::vector<uint8_t>&> asBinary() const;
+    std::optional<const std::string*> asString() const; // Changed to pointer
+    std::optional<const std::vector<uint8_t>*> asBinary() const; // Changed to pointer
     std::optional<std::chrono::nanoseconds> asDuration() const;
 
+    // New: Direct Access (throws on mismatch, like std::get)
+    template<typename T> const T& get() const { return std::get<T>(static_cast<const LogValueBase&>(*this)); }
+    template<typename T> T& get() { return std::get<T>(static_cast<LogValueBase&>(*this)); }
+
+    // New: Optional Access (returns nullptr on mismatch, like std::get_if)
+    template<typename T> const T* get_if() const noexcept { return std::get_if<T>(static_cast<const LogValueBase*>(this)); }
+    template<typename T> T* get_if() noexcept { return std::get_if<T>(static_cast<LogValueBase*>(this)); }
+
+    // Converts the stored value to its string representation.
+    // binary_encoding applies only if the stored type is std::vector<uint8_t>.
+    std::string toString(LogEntryJsonOptions::BinaryEncoding binary_encoding = LogEntryJsonOptions::BinaryEncoding::Hex) const;
+
     // New: Comparison operators
-    std::strong_ordering operator<=>(const LogValue& other) const = default;
-    bool operator==(const LogValue& other) const = default;
+    std::strong_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
+    bool operator==(const LogValue& other) const; // Remove default to implement manually
 }; // Closing brace for LogValue
 
 // Global function or friend method within LogValue
 std::ostream& operator<<(std::ostream& os, const LogValue& value);
 
-struct LogEntry {
-    enum class TimestampFormat { Default, ISO8601, UnixMillis };
-
-    struct JsonOptions {
-        enum class Precision { Seconds, Millis, Micros, Nanos };
-        enum class Timezone { Local, UTC }; // New
-        enum class BinaryEncoding { Hex, Base64 }; // New
-
-        bool pretty = false;
-        bool include_source = true;
-        bool include_thread = true;
-        bool include_tracing = true;
-        bool exclude_empty = false; // New: skip empty attributes/tags
-        TimestampFormat timestamp_format = TimestampFormat::Default;
-        Precision precision = Precision::Millis; // New: configurable precision
-        Timezone timezone = Timezone::UTC; // New: Default to UTC for machine-readable logs
-        BinaryEncoding binary_encoding = BinaryEncoding::Hex; // New: Default to Hex encoding
-        std::optional<std::string> custom_timestamp_format = std::nullopt; // New: optional strftime string
-
-        // New: Structured data pretty-printing control
-        bool pretty_structured_data = false; // Apply pretty printing to LogList/LogObject values
-        int indent_level = 2; // Indentation for pretty printing (global and for structured data)
-
-        // New: Field inclusion/exclusion filters
-        // A set of field names (e.g., "message", "level", "attributes.my_attr") to explicitly include.
-        // If empty, all default fields are included (unless excluded by exclude_fields).
-        std::set<std::string> include_fields; 
-        // A set of field names to explicitly exclude. Exclusions override inclusions.
-        std::set<std::string> exclude_fields; 
-
-        // New: Options for sanitization (e.g., control characters in strings)
-        bool sanitize_strings = true; // Replace non-printable characters or escape them
+// New: std::hash specialization for LogValue
+namespace std {
+    template<> struct hash<LogValue> {
+        size_t operator()(const LogValue& lv) const noexcept; // Added noexcept
     };
+} // namespace std
 
-    static const JsonOptions defaultJsonOptions; // New: Default options for JSON serialization
+struct LogEntry {
+    // Using declarations to make external structs accessible via LogEntry::
+    using JsonOptions = LogEntryJsonOptions;
+    using TimestampFormat = JsonOptions::TimestampFormat;
+    using TimestampFormatOptions = LogEntryTimestampFormatOptions;
+
+    static const JsonOptions defaultJsonOptions;
 
     // Existing fields (Public API Compat)
     std::string timestamp;
@@ -169,11 +193,39 @@ struct LogEntry {
     // Constructors
     LogEntry();
 
+    // New: Static Timestamp Converters
+    static std::string formatTimestamp(
+        std::chrono::system_clock::time_point tp,
+        JsonOptions::TimestampFormat format_type, // Use JsonOptions directly
+        const TimestampFormatOptions& opts = {}
+    );
+
+    static std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str
+    );
+    static std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str,
+        JsonOptions::TimestampFormat format_type, // Use JsonOptions directly
+        std::string_view custom_format = ""
+    );
+
+
     // Static helpers
+    static bool isAtLeast(LogLevel entryLevel, LogLevel minLevel);
+    static bool isError(LogLevel level);
     static LogLevel parseLevel(std::string_view level_str);
     static std::string_view levelToString(LogLevel level);
     static uint64_t currentProcessId(); // Iteration 1
     static std::string currentHostName(); // Iteration 1
+
+    // New: Global Default Metadata Providers
+    using HostNameProvider = std::function<std::string()>;
+    using AppNameProvider = std::function<std::string()>;
+
+    static void setHostNameProvider(HostNameProvider provider);
+    static void setAppNameProvider(AppNameProvider provider);
+    static void resetHostNameProvider();
+    static void resetAppNameProvider();
 
     // Factory methods
     static LogEntry create(LogLevel level, std::string_view message, 
@@ -213,6 +265,17 @@ struct LogEntry {
     LogEntry& withSource(std::source_location loc = std::source_location::current());
     LogEntry& withTag(std::string_view tag);
     LogEntry& withTags(std::initializer_list<std::string_view> tags);
+    // New: Tag manipulation
+    LogEntry& removeTag(std::string_view tag_name);
+    LogEntry& clearTags();
+    bool hasAllTags(const std::initializer_list<std::string_view>& tag_names) const;
+    bool hasAnyTag(const std::initializer_list<std::string_view>& tag_names) const;
+    const std::set<std::string, std::less<>>& getTags() const; // Read-only access to all tags
+
+    // New: Cloning with tag manipulation
+    LogEntry clonedWithoutTag(std::string_view tag_name) const;
+    LogEntry clonedWithoutTags() const;
+
     LogEntry& withException(const std::exception& e);
     LogEntry& withTraceContext(std::string_view tid, std::string_view sid);
     LogEntry& withSystemLoad();  // New: Captures system load averages
@@ -227,6 +290,12 @@ struct LogEntry {
     LogEntry& mergeAttributes(const LogEntry& other); // Iteration 1
     LogEntry& merge(const LogEntry& other, bool overwrite_attributes = true, bool merge_tags = true); // New
 
+    // New: Cloning with Field Overrides
+    LogEntry clonedWithLevel(LogLevel new_level) const;
+    LogEntry clonedWithMessage(std::string_view new_message) const;
+    LogEntry clonedWithAttribute(std::string_view key, LogValue value) const;
+    LogEntry clonedWithAttributes(const std::map<std::string, LogValue>& attrs) const;
+    LogEntry clonedWithoutAttribute(std::string_view key) const;
     LogEntry clonedWithTag(std::string_view tag) const;
 
     // Methods
@@ -286,6 +355,10 @@ struct LogEntry {
     // Comparison (C++20)
     std::strong_ordering operator<=>(const LogEntry& other) const;
     bool operator==(const LogEntry& other) const;
+
+    static void setDefaultJsonOptions(const JsonOptions& opts);
+    static const JsonOptions& getDefaultJsonOptions();
+    std::string toJson() const; // Overload to use default options
 
     std::string toJson(const JsonOptions& options = defaultJsonOptions) const;
 

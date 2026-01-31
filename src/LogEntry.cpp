@@ -18,7 +18,38 @@
 #include <fstream> // For reading /proc files
 #endif
 
-const LogEntry::JsonOptions LogEntry::defaultJsonOptions; // Initializes with all defaults
+// Static mutable variable for default JsonOptions
+namespace { // Anonymous namespace for internal linkage
+    LogEntry::JsonOptions s_defaultJsonOptions;
+    std::optional<LogEntry::HostNameProvider> s_hostNameProvider;
+    std::optional<LogEntry::AppNameProvider> s_appNameProvider;
+}
+
+// Implement static methods for JsonOptions management
+void LogEntry::setDefaultJsonOptions(const JsonOptions& opts) {
+    s_defaultJsonOptions = opts;
+}
+
+const LogEntry::JsonOptions& LogEntry::getDefaultJsonOptions() {
+    return s_defaultJsonOptions;
+}
+
+// Implement static methods for metadata providers
+void LogEntry::setHostNameProvider(HostNameProvider provider) {
+    s_hostNameProvider = provider;
+}
+
+void LogEntry::setAppNameProvider(AppNameProvider provider) {
+    s_appNameProvider = provider;
+}
+
+void LogEntry::resetHostNameProvider() {
+    s_hostNameProvider.reset();
+}
+
+void LogEntry::resetAppNameProvider() {
+    s_appNameProvider.reset();
+}
 
 LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
 
@@ -26,17 +57,260 @@ LogEntry::LogEntry() : level(LogLevel::UNKNOWN) {}
 LogValue::LogValue(LogList list) : LogValueBase(std::make_shared<LogList>(std::move(list))) {}
 LogValue::LogValue(LogObject obj) : LogValueBase(std::make_shared<LogObject>(std::move(obj))) {}
 
-bool LogValue::isList() const { return std::holds_alternative<std::shared_ptr<LogList>>(*this); }
-bool LogValue::isObject() const { return std::holds_alternative<std::shared_ptr<LogObject>>(*this); }
+ValueType LogValue::type() const noexcept {
+    // The index of the variant corresponds to the ValueType enum order.
+    // std::monostate, bool, int64_t, uint64_t, double, std::string, std::vector<uint8_t>,
+    // std::chrono::nanoseconds, std::shared_ptr<LogList>, std::shared_ptr<LogObject>
+    // Must match the ValueType enum:
+    // Monostate, String, Int64, UInt64, Double, Bool, Binary, Nanoseconds, List, Object
+    // Re-ordering needed to match.
+    // For now, map index to correct ValueType. This is fragile if LogValueBase variant order changes.
+    // A better approach would be to use std::visit or a type switch.
+    // Let's use std::visit for robustness.
 
-const LogList &LogValue::asList() const
-{
-    return *std::get<std::shared_ptr<LogList>>(*this);
+    return std::visit([](auto&& arg) -> ValueType {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            return ValueType::Monostate;
+        } else if constexpr (std::is_same_v<T, bool>) {
+            return ValueType::Bool;
+        } else if constexpr (std::is_same_v<T, int64_t>) {
+            return ValueType::Int64;
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            return ValueType::UInt64;
+        } else if constexpr (std::is_same_v<T, double>) {
+            return ValueType::Double;
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            return ValueType::String;
+        } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+            return ValueType::Binary;
+        } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
+            return ValueType::Nanoseconds;
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
+            return ValueType::List;
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<LogObject>>) {
+            return ValueType::Object;
+        } else {
+            // Should not happen if all types are covered.
+            return ValueType::Monostate; // Fallback
+        }
+    }, static_cast<const LogValueBase&>(*this));
 }
 
-const LogObject &LogValue::asObject() const
-{
-    return *std::get<std::shared_ptr<LogObject>>(*this);
+bool LogValue::is(ValueType t) const noexcept {
+    return type() == t;
+}
+
+bool LogValue::isNull() const noexcept {
+    return is(ValueType::Monostate);
+}
+
+// New: Convenience constructors for various types
+LogValue::LogValue(std::string_view s) : LogValueBase(std::string(s)) {}
+LogValue::LogValue(const char* s) : LogValueBase(std::string(s)) {}
+LogValue::LogValue(std::chrono::system_clock::time_point tp) : LogValueBase(std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch())) {}
+
+// Explicit conversion helpers (now returning std::optional<T*>)
+std::optional<const LogList*> LogValue::asList() const {
+    if (auto p = std::get_if<std::shared_ptr<LogList>>(this)) {
+        return p->get(); // Return raw pointer from shared_ptr
+    }
+    return std::nullopt;
+}
+
+std::optional<const LogObject*> LogValue::asObject() const {
+    if (auto p = std::get_if<std::shared_ptr<LogObject>>(this)) {
+        return p->get(); // Return raw pointer from shared_ptr
+    }
+    return std::nullopt;
+}
+
+// New: Accessors for specific types (returning std::optional<T> or std::optional<T*>)
+std::optional<bool> LogValue::asBool() const {
+    if (auto p = std::get_if<bool>(this)) return *p;
+    return std::nullopt;
+}
+
+std::optional<int64_t> LogValue::asInt64() const {
+    if (auto p = std::get_if<int64_t>(this)) return *p;
+    return std::nullopt;
+}
+
+std::optional<uint64_t> LogValue::asUint64() const {
+    if (auto p = std::get_if<uint64_t>(this)) return *p;
+    return std::nullopt;
+}
+
+std::optional<double> LogValue::asDouble() const {
+    if (auto p = std::get_if<double>(this)) return *p;
+    return std::nullopt;
+}
+
+std::optional<const std::string*> LogValue::asString() const {
+    if (auto p = std::get_if<std::string>(this)) return p;
+    return std::nullopt;
+}
+
+std::optional<const std::vector<uint8_t>*> LogValue::asBinary() const {
+    if (auto p = std::get_if<std::vector<uint8_t>>(this)) return p;
+    return std::nullopt;
+}
+
+std::optional<std::chrono::nanoseconds> LogValue::asDuration() const {
+    if (auto p = std::get_if<std::chrono::nanoseconds>(this)) return *p;
+    return std::nullopt;
+}
+
+// Base64 helper (Moved here to be declared before LogValueToStringVisitor)
+static std::string base64Encode(const std::vector<uint8_t>& data) {
+    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string ret;
+    int i = 0;
+    int j = 0;
+    uint8_t char_array_3[3];
+    uint8_t char_array_4[4];
+
+    for (auto b : data) {
+        char_array_3[i++] = b;
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for (i = 0; (i < 4); i++) ret += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (j = i; j < 3; j++) char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; (j < i + 1); j++) ret += base64_chars[char_array_4[j]];
+        while ((i++ < 3)) ret += '=';
+    }
+
+    return ret;
+}
+
+// Internal helper for LogValue::toString to recursively print lists/objects compactly
+struct LogValueToStringVisitor {
+    std::ostringstream& oss;
+    LogEntryJsonOptions::BinaryEncoding binaryEncoding; // Correct type
+
+    void operator()(std::monostate) const { oss << "null"; }
+    void operator()(bool b) const { oss << (b ? "true" : "false"); }
+    void operator()(int64_t i) const { oss << i; }
+    void operator()(uint64_t u) const { oss << u; }
+    void operator()(double d) const { oss << std::fixed << std::setprecision(std::numeric_limits<double>::max_digits10) << d; }
+    void operator()(const std::string& s) const { oss << "\"" << s << "\""; } // Simple quote, not full JSON escape for compact form
+
+    void operator()(const std::vector<uint8_t>& binary) const {
+        if (binaryEncoding == LogEntryJsonOptions::BinaryEncoding::Hex) { // Correct type
+            oss << "\"0x";
+            auto flags = oss.flags();
+            oss << std::hex << std::setfill('0');
+            for (uint8_t b : binary) {
+                oss << std::setw(2) << static_cast<int>(b);
+            }
+            oss.flags(flags);
+            oss << "\"";
+        } else { // Base64
+            oss << "\"" << base64Encode(binary) << "\"";
+        }
+    }
+    void operator()(std::chrono::nanoseconds duration) const {
+        oss << duration.count() << "ns"; // Human-readable duration
+    }
+
+    void operator()(const std::shared_ptr<LogList>& list) const {
+        if (!list) {
+            oss << "null";
+            return;
+        }
+        oss << "[";
+        bool first = true;
+        for (const auto& item : *list) {
+            if (!first) oss << ",";
+            std::visit(LogValueToStringVisitor{oss, binaryEncoding}, static_cast<const LogValueBase&>(item));
+            first = false;
+        }
+        oss << "]";
+    }
+
+    void operator()(const std::shared_ptr<LogObject>& obj) const {
+        if (!obj) {
+            oss << "null";
+            return;
+        }
+        oss << "{";
+        bool first = true;
+        for (const auto& pair : *obj) {
+            if (!first) oss << ",";
+            oss << "\"" << pair.first << "\":";
+            std::visit(LogValueToStringVisitor{oss, binaryEncoding}, static_cast<const LogValueBase&>(pair.second));
+            first = false;
+        }
+        oss << "}";
+    }
+};
+
+std::string LogValue::toString(LogEntryJsonOptions::BinaryEncoding binary_encoding) const { // Correct type
+    std::ostringstream oss;
+    std::visit(LogValueToStringVisitor{oss, binary_encoding}, static_cast<const LogValueBase&>(*this));
+    return oss.str();
+}
+
+// Explicit implementation for LogValue comparison operators
+// This is necessary because the default for std::variant does not handle std::shared_ptr content comparison.
+std::strong_ordering LogValue::operator<=>(const LogValue& other) const {
+    if (this->index() != other.index()) {
+        return this->index() <=> other.index();
+    }
+
+    return std::visit([&](auto&& arg) -> std::strong_ordering {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            return std::strong_ordering::equal;
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
+            // Compare contents of LogList
+            if (!arg && !std::get<std::shared_ptr<LogList>>(other)) return std::strong_ordering::equal;
+            if (!arg) return std::strong_ordering::less;
+            if (!std::get<std::shared_ptr<LogList>>(other)) return std::strong_ordering::greater;
+            return *arg <=> *std::get<std::shared_ptr<LogList>>(other);
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<LogObject>>) {
+            // Compare contents of LogObject
+            if (!arg && !std::get<std::shared_ptr<LogObject>>(other)) return std::strong_ordering::equal;
+            if (!arg) return std::strong_ordering::less;
+            if (!std::get<std::shared_ptr<LogObject>>(other)) return std::strong_ordering::greater;
+            return *arg <=> *std::get<std::shared_ptr<LogObject>>(other);
+        } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+            // Compare contents of binary data
+            return arg <=> std::get<std::vector<uint8_t>>(other);
+        } else {
+            // For other types, direct comparison
+            return arg <=> std::get<T>(other);
+        }
+    }, static_cast<const LogValueBase&>(*this));
+}
+
+bool LogValue::operator==(const LogValue& other) const {
+    // Leverage the three-way comparison operator
+    return (*this <=> other) == 0;
+}
+
+bool LogEntry::isAtLeast(LogLevel entryLevel, LogLevel minLevel) {
+    if (entryLevel == LogLevel::UNKNOWN || minLevel == LogLevel::UNKNOWN) return false;
+    return static_cast<int>(entryLevel) >= static_cast<int>(minLevel);
+}
+
+bool LogEntry::isError(LogLevel level) {
+    return level == LogLevel::ERROR || level == LogLevel::CRITICAL;
 }
 
 LogLevel LogEntry::parseLevel(std::string_view level_str)
@@ -143,7 +417,7 @@ LogEntry &LogEntry::withMetadata()
     if (time_point.time_since_epoch().count() == 0)
     {
         time_point = std::chrono::system_clock::now();
-        timestamp = generatedTimestampString();
+        timestamp = generatedTimestampString(getDefaultJsonOptions()); // Use default options for timestamp string
     }
 
     if (process_id == 0)
@@ -153,7 +427,20 @@ LogEntry &LogEntry::withMetadata()
 
     if (host_name.empty())
     {
-        host_name = currentHostName();
+        if (s_hostNameProvider) {
+            host_name = (*s_hostNameProvider)();
+        } else {
+            host_name = currentHostName();
+        }
+    }
+
+    if (app_name.empty()) // New: Use app_name provider
+    {
+        if (s_appNameProvider) {
+            app_name = (*s_appNameProvider)();
+        } else {
+            app_name = ""; // Default empty if no provider
+        }
     }
 
     if (thread_id.empty())
@@ -225,7 +512,11 @@ LogEntry &LogEntry::withThreadId(std::thread::id tid)
 LogEntry &LogEntry::withTimestamp(std::chrono::system_clock::time_point tp, bool include_fractional)
 {
     time_point = tp;
-    timestamp = generatedTimestampString(include_fractional);
+    JsonOptions opts = getDefaultJsonOptions(); // Start with default options
+    if (!include_fractional) {
+        opts.precision = JsonOptions::Precision::Seconds; // Override precision if fractional not desired
+    }
+    timestamp = generatedTimestampString(opts);
     return *this;
 }
 
@@ -252,10 +543,56 @@ LogEntry &LogEntry::withTags(std::initializer_list<std::string_view> tag_list)
     return *this;
 }
 
+// New: Tag manipulation
+LogEntry& LogEntry::removeTag(std::string_view tag_name) {
+    tags.erase(std::string(tag_name));
+    return *this;
+}
+
+LogEntry& LogEntry::clearTags() {
+    tags.clear();
+    return *this;
+}
+
+bool LogEntry::hasAllTags(const std::initializer_list<std::string_view>& tag_names) const {
+    for (const auto& tag_name : tag_names) {
+        if (tags.find(std::string(tag_name)) == tags.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LogEntry::hasAnyTag(const std::initializer_list<std::string_view>& tag_names) const {
+    for (const auto& tag_name : tag_names) {
+        if (tags.count(std::string(tag_name)) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const std::set<std::string, std::less<>>& LogEntry::getTags() const {
+    return tags;
+}
+
+// New: Cloning with tag manipulation
+LogEntry LogEntry::clonedWithoutTag(std::string_view tag_name) const {
+    LogEntry clone = *this;
+    clone.removeTag(tag_name);
+    return clone;
+}
+
+LogEntry LogEntry::clonedWithoutTags() const {
+    LogEntry clone = *this;
+    clone.clearTags();
+    return clone;
+}
+
 LogEntry &LogEntry::withException(const std::exception &e)
 {
-    withAttribute("exception_type", std::string(typeid(e).name()));
-    withAttribute("exception_message", std::string(e.what()));
+    withAttribute("exception_type", LogValue(std::string(typeid(e).name())));
+    withAttribute("exception_message", LogValue(std::string(e.what())));
     return *this;
 }
 
@@ -331,6 +668,41 @@ LogEntry &LogEntry::mergeAttributes(const LogEntry &other)
     return *this;
 }
 
+LogEntry LogEntry::clonedWithLevel(LogLevel new_level) const
+{
+    LogEntry clone = *this;
+    clone.level = new_level;
+    return clone;
+}
+
+LogEntry LogEntry::clonedWithMessage(std::string_view new_message) const
+{
+    LogEntry clone = *this;
+    clone.message = std::string(new_message);
+    return clone;
+}
+
+LogEntry LogEntry::clonedWithAttribute(std::string_view key, LogValue value) const
+{
+    LogEntry clone = *this;
+    clone.withAttribute(std::string(key), std::move(value));
+    return clone;
+}
+
+LogEntry LogEntry::clonedWithAttributes(const std::map<std::string, LogValue>& attrs) const
+{
+    LogEntry clone = *this;
+    clone.withAttributes(attrs);
+    return clone;
+}
+
+LogEntry LogEntry::clonedWithoutAttribute(std::string_view key) const
+{
+    LogEntry clone = *this;
+    clone.removeAttribute(std::string(key));
+    return clone;
+}
+
 LogEntry LogEntry::clonedWithTag(std::string_view tag) const
 {
     LogEntry clone = *this;
@@ -340,70 +712,30 @@ LogEntry LogEntry::clonedWithTag(std::string_view tag) const
 
 bool LogEntry::parseTime()
 {
-    std::istringstream ss(timestamp);
-    std::tm tm = {};
-    // Format: 2023-10-27 10:00:00.000
-    char dash1, dash2, colon1, colon2;
-    int year, month, day, hour, min, sec;
-
-    if (!(ss >> year >> dash1 >> month >> dash2 >> day >> hour >> colon1 >> min >> colon2 >> sec))
-    {
-        return false;
+    // This function now primarily acts as a wrapper around the new static parseTimestamp
+    // to maintain compatibility with existing internal calls.
+    auto parsed_tp = LogEntry::parseTimestamp(timestamp);
+    if (parsed_tp) {
+        time_point = *parsed_tp;
+        return true;
     }
-
-    tm.tm_year = year - 1900;
-    tm.tm_mon = month - 1;
-    tm.tm_mday = day;
-    tm.tm_hour = hour;
-    tm.tm_min = min;
-    tm.tm_sec = sec;
-    tm.tm_isdst = -1;
-
-    std::time_t tt = std::mktime(&tm);
-    if (tt == -1)
-        return false;
-
-    auto tp = std::chrono::system_clock::from_time_t(tt);
-
-    // Check for fractional seconds
-    if (ss.peek() == '.')
-    {
-        ss.ignore(); // skip '.'
-        std::string frac_str;
-        while (std::isdigit(ss.peek()))
-        {
-            frac_str += static_cast<char>(ss.get());
-        }
-
-        if (!frac_str.empty())
-        {
-            try
-            {
-                double val = std::stod("0." + frac_str);
-                auto nanos = std::chrono::nanoseconds(static_cast<long long>(val * 1'000'000'000));
-                tp += std::chrono::duration_cast<std::chrono::system_clock::duration>(nanos);
-            }
-            catch (...)
-            {
-            }
-        }
-    }
-
-    time_point = tp;
-    return true;
+    time_point = std::chrono::system_clock::time_point(); // Reset on failure
+    return false;
 }
 
-std::string LogEntry::generatedTimestampString(bool include_fractional, 
-                                             JsonOptions::Timezone tz,
-                                             const std::optional<std::string>& custom_fmt) const
-{
-    if (time_point.time_since_epoch().count() == 0)
+// Helper to format a time_point into a string based on options
+std::string LogEntry::formatTimestamp(
+    std::chrono::system_clock::time_point tp,
+    LogEntry::JsonOptions::TimestampFormat format_type,
+    const TimestampFormatOptions& opts
+) {
+    if (tp.time_since_epoch().count() == 0)
         return "";
 
-    std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
+    std::time_t tt = std::chrono::system_clock::to_time_t(tp);
     std::tm tm = {};
     
-    if (tz == JsonOptions::Timezone::UTC) {
+    if (opts.timezone == JsonOptions::Timezone::UTC) {
 #if defined(_WIN32) || defined(_WIN64)
         gmtime_s(&tm, &tt);
 #else
@@ -418,20 +750,226 @@ std::string LogEntry::generatedTimestampString(bool include_fractional,
     }
 
     std::ostringstream ss;
-    if (custom_fmt.has_value()) {
-        ss << std::put_time(&tm, custom_fmt->c_str());
-    } else {
-        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-        if (include_fractional)
+    if (opts.custom_format.has_value()) {
+        // Use custom strftime format
+        ss << std::put_time(&tm, opts.custom_format->c_str());
+    } else if (format_type == JsonOptions::TimestampFormat::ISO8601) {
+        ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
+
+        auto epoch = tp.time_since_epoch();
+        if (opts.precision != JsonOptions::Precision::Seconds)
         {
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          time_point.time_since_epoch()) %
+            ss << ".";
+            long long fractional_part;
+            int width;
+            if (opts.precision == JsonOptions::Precision::Millis) {
+                fractional_part = std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count() % 1000;
+                width = 3;
+            } else if (opts.precision == JsonOptions::Precision::Micros) {
+                fractional_part = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count() % 1000000;
+                width = 6;
+            } else { // Nanos
+                fractional_part = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch).count() % 1000000000;
+                width = 9;
+            }
+            ss << std::setfill('0') << std::setw(width) << fractional_part;
+        }
+        ss << (opts.timezone == JsonOptions::Timezone::UTC ? "Z" : "");
+    } else { // Default format (YYYY-MM-DD HH:MM:SS.mmm)
+        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        if (opts.precision != JsonOptions::Precision::Seconds) { // Default format typically implies milliseconds
+             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          tp.time_since_epoch()) %
                       1000;
             ss << "." << std::setfill('0') << std::setw(3) << ms.count();
         }
     }
-
     return ss.str();
+}
+
+// NOTE: The old `generatedTimestampString` had parameters `bool include_fractional`, `JsonOptions::Timezone tz`,
+// `const std::optional<std::string>& custom_fmt`. This new one is overloaded and takes `JsonOptions`.
+// This is to correctly update the call site from toJson().
+std::string LogEntry::generatedTimestampString(const JsonOptions& options) const
+{
+    // For compatibility with calls using the old signature of generatedTimestampString (which passed bool, tz, custom_fmt)
+    // and the new toJson() which passes a JsonOptions object.
+    TimestampFormatOptions opts;
+    opts.precision = options.precision;
+    opts.timezone = options.timezone;
+    opts.custom_format = options.custom_timestamp_format;
+    return LogEntry::formatTimestamp(time_point, options.timestamp_format, opts);
+}
+
+// Helper to parse ISO8601 timestamps
+static std::optional<std::chrono::system_clock::time_point> parseISO8601(std::string_view timestamp_str) {
+    std::tm tm = {};
+    std::istringstream tss{std::string(timestamp_str)}; // Copy to allow manipulation
+
+    // Attempt to parse YYYY-MM-DDTHH:MM:SS format
+    int y, m, d, H, M, S;
+    char sep1, sep2, T_char, colon1, colon2;
+    if (!(tss >> y >> sep1 >> m >> sep2 >> d >> T_char >> H >> colon1 >> M >> colon2 >> S) ||
+        sep1 != '-' || sep2 != '-' || T_char != 'T' || colon1 != ':' || colon2 != ':') {
+        return std::nullopt;
+    }
+
+    tm.tm_year = y - 1900;
+    tm.tm_mon = m - 1;
+    tm.tm_mday = d;
+    tm.tm_hour = H;
+    tm.tm_min = M;
+    tm.tm_sec = S;
+    tm.tm_isdst = -1; // Let mktime/timegm determine daylight saving
+
+    std::time_t tt;
+    // Check for 'Z' (UTC) or timezone offset
+    char tz_char = tss.peek();
+    bool is_utc = (tz_char == 'Z');
+
+    if (is_utc) {
+        tss.ignore(); // Skip 'Z'
+#if defined(_WIN32) || defined(_WIN64)
+        tt = _mkgmtime(&tm); // Windows equivalent of timegm for UTC
+#else
+        tt = timegm(&tm); // For UTC time
+#endif
+    } else {
+        tt = std::mktime(&tm); // For local time
+    }
+    
+    if (tt == -1) {
+        return std::nullopt;
+    }
+
+    auto tp = std::chrono::system_clock::from_time_t(tt);
+
+    // Handle fractional seconds if present
+    if (tss.peek() == '.') {
+        tss.ignore(); // Skip '.'
+        std::string frac_str;
+        while (tss.good() && std::isdigit(tss.peek())) { // Use tss.good() to prevent infinite loop on bad peek
+            frac_str += static_cast<char>(tss.get());
+        }
+        if (!frac_str.empty()) {
+            try {
+                // Pad or truncate fractional string to 9 digits (nanoseconds)
+                frac_str.resize(9, '0');
+                long long nanos_val = std::stoll(frac_str);
+                tp += std::chrono::nanoseconds(nanos_val);
+            } catch (const std::out_of_range&) {
+                // Fraction too long or invalid, ignore
+            }
+        }
+    }
+
+    return tp;
+}
+
+// Helper to parse default format timestamps (YYYY-MM-DD HH:MM:SS.mmm)
+static std::optional<std::chrono::system_clock::time_point> parseDefaultFormat(std::string_view timestamp_str) {
+    std::istringstream ss{std::string(timestamp_str)};
+    std::tm tm = {};
+    char dash1, dash2, colon1, colon2;
+    int year, month, day, hour, min, sec;
+
+    if (!(ss >> year >> dash1 >> month >> dash2 >> day >> hour >> colon1 >> min >> colon2 >> sec)) {
+        return std::nullopt;
+    }
+
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = min;
+    tm.tm_sec = sec;
+    tm.tm_isdst = -1;
+
+    std::time_t tt = std::mktime(&tm);
+    if (tt == -1)
+        return std::nullopt;
+
+    auto tp = std::chrono::system_clock::from_time_t(tt);
+
+    if (ss.peek() == '.') {
+        ss.ignore(); // skip '.'
+        std::string frac_str;
+        while (ss.good() && std::isdigit(ss.peek())) { // Use ss.good()
+            frac_str += static_cast<char>(ss.get());
+        }
+        if (!frac_str.empty()) {
+            try {
+                frac_str.resize(9, '0');
+                long long nanos_val = std::stoll(frac_str);
+                tp += std::chrono::nanoseconds(nanos_val);
+            } catch (const std::out_of_range&) {
+                // Ignore
+            }
+        }
+    }
+    return tp;
+}
+
+
+std::optional<std::chrono::system_clock::time_point> LogEntry::parseTimestamp(
+    std::string_view timestamp_str
+) {
+    // Attempt to parse as ISO8601 first
+    if (auto tp = parseISO8601(timestamp_str)) {
+        return tp;
+    }
+    // Then attempt as default format
+    if (auto tp = parseDefaultFormat(timestamp_str)) {
+        return tp;
+    }
+
+    // Attempt to parse as Unix Millis
+    try {
+        size_t pos;
+        // Use std::string to ensure parseability with stoll
+        std::string s_timestamp_str(timestamp_str);
+        long long millis = std::stoll(s_timestamp_str, &pos);
+        if (pos == timestamp_str.length()) { // Entire string was a number
+            return std::chrono::system_clock::time_point(std::chrono::milliseconds(millis));
+        }
+    } catch (const std::exception&) {
+        // Not a Unix Millis timestamp
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::chrono::system_clock::time_point> LogEntry::parseTimestamp(
+    std::string_view timestamp_str,
+    LogEntry::JsonOptions::TimestampFormat format_type,
+    std::string_view custom_format
+) {
+    if (format_type == JsonOptions::TimestampFormat::ISO8601) {
+        return parseISO8601(timestamp_str);
+    } else if (format_type == JsonOptions::TimestampFormat::Default) {
+        // Custom format parsing with strptime is non-portable. For now, if custom_format is provided
+        // it means we expect the string to be formatted with it.
+        // However, LogEntry does not currently implement strptime-like parsing.
+        // Thus, we currently fall back to default parsing behavior if no custom format is available.
+        // If custom_format is provided, and we don't have a strptime implementation,
+        // it's better to fail or document this limitation.
+        // For iteration 6, we will not implement custom format parsing on purpose,
+        // as the design document states "custom_format = std::nullopt; // For strftime-like format".
+        // strftime is for formatting, not parsing.
+        return parseDefaultFormat(timestamp_str);
+    } else if (format_type == JsonOptions::TimestampFormat::UnixMillis) {
+         try {
+            size_t pos;
+            std::string s_timestamp_str(timestamp_str);
+            long long millis = std::stoll(s_timestamp_str, &pos);
+            if (pos == timestamp_str.length()) {
+                return std::chrono::system_clock::time_point(std::chrono::milliseconds(millis));
+            }
+        } catch (const std::exception&) {
+            // Not a Unix Millis timestamp
+        }
+    }
+    return std::nullopt;
 }
 
 void LogEntry::setAttribute(const std::string &key, const std::string &value)
@@ -899,77 +1437,118 @@ static std::expected<std::set<std::string, std::less<>>, std::string> parseJsonS
 LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
 {
     LogEntry entry;
-    // Auto-populate defaults
-    entry.withMetadata();
+    // Auto-populate defaults - optional, can be removed if fromMap is expected to be raw parser
+    // entry.withMetadata(); // Removed this as fromMap should be a pure deserializer
 
     for (const auto &[key, value] : data)
     {
-        if (key == "level" && std::holds_alternative<std::string>(value))
+        if (key == "level")
         {
-            entry.level = parseLevel(std::get<std::string>(value));
+            if (auto s_ptr = value.asString()) {
+                entry.level = parseLevel(*s_ptr); // Corrected: *s_ptr is const std::string&
+            }
         }
-        else if (key == "message" && std::holds_alternative<std::string>(value))
+        else if (key == "message")
         {
-            entry.message = std::get<std::string>(value);
+            if (auto s_ptr = value.asString()) {
+                entry.message = *s_ptr; // Corrected: *s_ptr is const std::string&
+            }
         }
-        else if (key == "timestamp" && std::holds_alternative<std::string>(value))
+        else if (key == "timestamp")
         {
-            entry.timestamp = std::get<std::string>(value);
-            entry.parseTime();
+            if (auto s_ptr = value.asString()) {
+                entry.timestamp = *s_ptr; // Corrected: *s_ptr is const std::string&
+                entry.parseTime(); // Populate time_point
+            }
+            // If it's a numeric timestamp (UnixMillis), parse it as well
+            else if (auto i = value.asInt64()) {
+                entry.time_point = std::chrono::system_clock::time_point(std::chrono::milliseconds(*i));
+                entry.timestamp = entry.generatedTimestampString(getDefaultJsonOptions()); // Generate string from time_point
+            } else if (auto u = value.asUint64()) {
+                entry.time_point = std::chrono::system_clock::time_point(std::chrono::milliseconds(*u));
+                entry.timestamp = entry.generatedTimestampString(getDefaultJsonOptions());
+            }
         }
         else if (key == "process_id")
         {
-            if (std::holds_alternative<uint64_t>(value))
-                entry.process_id = std::get<uint64_t>(value);
-            else if (std::holds_alternative<int64_t>(value))
-                entry.process_id = static_cast<uint64_t>(std::get<int64_t>(value));
+            if (auto u = value.asUint64())
+                entry.process_id = *u;
+            else if (auto i = value.asInt64())
+                entry.process_id = static_cast<uint64_t>(*i);
         }
-        else if (key == "host_name" && std::holds_alternative<std::string>(value))
+        else if (key == "host_name")
         {
-            entry.host_name = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.host_name = *s_ptr; // Corrected
         }
-        else if (key == "app_name" && std::holds_alternative<std::string>(value))
+        else if (key == "app_name")
         {
-            entry.app_name = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.app_name = *s_ptr; // Corrected
         }
-        else if (key == "thread_id" && std::holds_alternative<std::string>(value))
+        else if (key == "thread_id")
         {
-            entry.thread_id = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.thread_id = *s_ptr; // Corrected
         }
-        else if (key == "trace_id" && std::holds_alternative<std::string>(value))
+        else if (key == "thread_name")
         {
-            entry.trace_id = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.thread_name = *s_ptr; // Corrected
         }
-        else if (key == "span_id" && std::holds_alternative<std::string>(value))
+        else if (key == "trace_id")
         {
-            entry.span_id = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.trace_id = *s_ptr; // Corrected
         }
-        else if (key == "source_file" && std::holds_alternative<std::string>(value))
+        else if (key == "span_id")
         {
-            entry.source_file = std::get<std::string>(value);
+            if (auto s_ptr = value.asString())
+                entry.span_id = *s_ptr; // Corrected
         }
-        else if (key == "source_function" && std::holds_alternative<std::string>(value))
+        else if (key == "source")
         {
-            entry.source_function = std::get<std::string>(value);
+            if (auto obj_ptr = value.asObject()) {
+                const auto& sourceObj = **obj_ptr; // Dereference optional and pointer
+                if (auto file_val = sourceObj.find("file"); file_val != sourceObj.end()) {
+                    if (auto s_ptr = file_val->second.asString())
+                        entry.source_file = *s_ptr; // Corrected
+                }
+                if (auto func_val = sourceObj.find("function"); func_val != sourceObj.end()) {
+                    if (auto s_ptr = func_val->second.asString())
+                        entry.source_function = *s_ptr; // Corrected
+                }
+                if (auto line_val = sourceObj.find("line"); line_val != sourceObj.end()) {
+                    if (auto i = line_val->second.asInt64())
+                        entry.source_line = static_cast<int>(*i);
+                }
+            }
         }
-        else if (key == "source_line" && std::holds_alternative<int64_t>(value))
+        else if (key == "tags")
         {
-            entry.source_line = static_cast<int>(std::get<int64_t>(value));
-        }
-        else if (key == "tags" && std::holds_alternative<std::shared_ptr<LogList>>(value))
-        {
-            auto list = std::get<std::shared_ptr<LogList>>(value);
-            for (const auto &v : *list)
-            {
-                if (std::holds_alternative<std::string>(v))
+            if (auto list_ptr = value.asList()) {
+                for (const auto &v : **list_ptr) // Dereference optional and pointer
                 {
-                    entry.tags.insert(std::get<std::string>(v));
+                    if (auto s_ptr = v.asString())
+                    {
+                        entry.tags.insert(*s_ptr); // Corrected
+                    }
+                }
+            }
+        }
+        else if (key == "attributes")
+        {
+            if (auto obj_ptr = value.asObject()) {
+                // Perform a deep copy of the attributes map
+                entry.attributes.clear(); // Clear existing attributes first
+                for (const auto& [attr_key, attr_val] : **obj_ptr) { // Dereference optional and pointer
+                    entry.attributes[attr_key] = attr_val;
                 }
             }
         }
         else
         {
-            // Treat everything else as an attribute
+            // If it's not one of the known top-level fields, it's an attribute
             entry.attributes[key] = value;
         }
     }
@@ -979,9 +1558,15 @@ LogEntry LogEntry::fromMap(const std::map<std::string, LogValue> &data)
 std::map<std::string, LogValue> LogEntry::toMap() const
 {
     std::map<std::string, LogValue> m;
-    m["timestamp"] = timestamp.empty() ? generatedTimestampString() : timestamp;
+
+    // Timestamp
+    m["timestamp"] = timestamp.empty() ? generatedTimestampString(JsonOptions{.precision = JsonOptions::Precision::Millis}) : LogValue(timestamp); // Use LogValue constructor
+    // Level
     m["level"] = std::string(levelToString(level));
+    // Message
     m["message"] = message;
+
+    // Direct fields
     if (process_id != 0)
         m["process_id"] = process_id;
     if (!host_name.empty())
@@ -994,13 +1579,23 @@ std::map<std::string, LogValue> LogEntry::toMap() const
         m["trace_id"] = trace_id;
     if (!span_id.empty())
         m["span_id"] = span_id;
-    if (!source_file.empty())
-        m["source_file"] = source_file;
-    if (!source_function.empty())
-        m["source_function"] = source_function;
-    if (source_line != 0)
-        m["source_line"] = static_cast<int64_t>(source_line);
+    if (!thread_name.empty())
+        m["thread_name"] = thread_name;
 
+
+    // Source object
+    if (!source_file.empty() || !source_function.empty() || source_line != 0) {
+        LogObject sourceObject;
+        if (!source_file.empty())
+            sourceObject["file"] = source_file;
+        if (!source_function.empty())
+            sourceObject["function"] = source_function;
+        if (source_line != 0)
+            sourceObject["line"] = static_cast<int64_t>(source_line);
+        m["source"] = LogValue(std::move(sourceObject));
+    }
+
+    // Tags list
     if (!tags.empty())
     {
         LogList tagList;
@@ -1009,9 +1604,15 @@ std::map<std::string, LogValue> LogEntry::toMap() const
         m["tags"] = LogValue(std::move(tagList));
     }
 
-    for (const auto &[key, value] : attributes)
+    // Attributes object
+    if (!attributes.empty())
     {
-        m[key] = value;
+        // Deep copy attributes into a new LogObject for nesting
+        LogObject attrs_map_copy;
+        for (const auto& [key, val] : attributes) {
+            attrs_map_copy[key] = val; // LogValue copy constructor
+        }
+        m["attributes"] = LogValue(std::move(attrs_map_copy));
     }
     return m;
 }
@@ -1336,6 +1937,63 @@ static std::string escapeJson(const std::string &s)
     return o.str();
 }
 
+// Helper function to combine hashes
+template <class T>
+inline void hash_combine(size_t& seed, const T& v) {
+    seed ^= std::hash<T>{}(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+// Custom hash for shared_ptr to LogList/LogObject by hashing their contents
+struct LogValueSharedPtrHasher {
+    size_t operator()(const std::shared_ptr<LogList>& list_ptr) const {
+        size_t seed = 0;
+        if (list_ptr) {
+            for (const auto& item : *list_ptr) {
+                hash_combine(seed, std::hash<LogValue>{}(item));
+            }
+        }
+        return seed;
+    }
+
+    size_t operator()(const std::shared_ptr<LogObject>& object_ptr) const {
+        size_t seed = 0;
+        if (object_ptr) {
+            for (const auto& pair : *object_ptr) {
+                hash_combine(seed, std::hash<std::string>{}(pair.first));
+                hash_combine(seed, std::hash<LogValue>{}(pair.second));
+            }
+        }
+        return seed;
+    }
+};
+
+// std::hash specialization for LogValue
+namespace std {
+    size_t hash<LogValue>::operator()(const LogValue& lv) const noexcept {
+        return std::visit([](auto&& arg) -> size_t {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::monostate>) {
+                return std::hash<int>{}(0); // Hash of null
+            } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
+                return LogValueSharedPtrHasher{}(arg);
+            } else if constexpr (std::is_same_v<T, std::shared_ptr<LogObject>>) {
+                return LogValueSharedPtrHasher{}(arg);
+            } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+                size_t seed = 0;
+                for (uint8_t byte : arg) {
+                    hash_combine(seed, byte);
+                }
+                return seed;
+            } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
+                return std::hash<long long>{}(arg.count());
+            }
+            else {
+                return std::hash<T>{}(arg);
+            }
+        }, static_cast<const LogValueBase&>(lv));
+    }
+} // namespace std
+
 // Base64 helper
 static std::string base64Encode(const std::vector<uint8_t>& data) {
     static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1473,6 +2131,10 @@ struct JsonVisitor
     }
 };
 
+std::string LogEntry::toJson() const {
+    return toJson(getDefaultJsonOptions());
+}
+
 std::string LogEntry::toJson(const JsonOptions &options) const
 {
     std::ostringstream oss;
@@ -1489,45 +2151,11 @@ std::string LogEntry::toJson(const JsonOptions &options) const
     }
     else
     {
-        oss << "\"";
-        if (options.custom_timestamp_format.has_value()) {
-            oss << generatedTimestampString(true, options.timezone, options.custom_timestamp_format);
-        } else if (options.timestamp_format == TimestampFormat::ISO8601) {
-            // ISO8601 format, explicitly UTC, with desired precision
-            std::time_t tt = std::chrono::system_clock::to_time_t(time_point);
-            std::tm tm = {};
-#if defined(_WIN32) || defined(_WIN64)
-            gmtime_s(&tm, &tt);
-#else
-            gmtime_r(&tt, &tm);
-#endif
-            oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
-
-            if (options.precision != JsonOptions::Precision::Seconds)
-            {
-                auto epoch = time_point.time_since_epoch();
-                oss << ".";
-                if (options.precision == JsonOptions::Precision::Millis)
-                {
-                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count() % 1000; // Use count() directly
-                    oss << std::setfill('0') << std::setw(3) << ms;
-                }
-                else if (options.precision == JsonOptions::Precision::Micros)
-                {
-                    auto us = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count() % 1000000; // Use count() directly
-                    oss << std::setfill('0') << std::setw(6) << us;
-                }
-                else if (options.precision == JsonOptions::Precision::Nanos)
-                {
-                    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch).count() % 1000000000; // Use count() directly
-                    oss << std::setfill('0') << std::setw(9) << ns;
-                }
-            }
-            oss << "Z"; // Indicate UTC
-        } else { // TimestampFormat::Default
-            oss << generatedTimestampString(true, options.timezone);
-        }
-        oss << "\"";
+        TimestampFormatOptions formatOpts;
+        formatOpts.precision = options.precision;
+        formatOpts.timezone = options.timezone;
+        formatOpts.custom_format = options.custom_timestamp_format;
+        oss << "\"" << formatTimestamp(time_point, options.timestamp_format, formatOpts) << "\"";
     }
 
     auto writeField = [&](const std::string &key, const auto &value, bool isString = true)
@@ -1617,6 +2245,7 @@ std::string LogEntry::toJson(const JsonOptions &options) const
     return oss.str();
 }
 
+
 std::strong_ordering LogEntry::operator<=>(const LogEntry &other) const
 {
     // If both have valid time_points (non-zero), use them.
@@ -1664,7 +2293,40 @@ bool LogEntry::operator==(const LogEntry &other) const
 
 bool LogEntry::isValid() const noexcept
 {
-    return level != LogLevel::UNKNOWN && !message.empty();
+    // Check 1: Basic requirements
+    if (level == LogLevel::UNKNOWN || message.empty()) {
+        return false;
+    }
+
+    // Check 2: Timestamp format and consistency
+    if (!timestamp.empty()) {
+        // Attempt to parse the timestamp string to verify its format
+        // Create a temporary LogEntry to avoid modifying 'this'
+        LogEntry tempEntry;
+        tempEntry.timestamp = this->timestamp;
+        if (!tempEntry.parseTime()) { // parseTime populates tempEntry.time_point
+            return false; // Timestamp string format is invalid
+        }
+
+        // Consistency check: If this->time_point is also set, ensure it matches
+        // Allow for a small delta if time_point was set by external system, but for now exact match is fine.
+        if (this->time_point.time_since_epoch().count() != 0 &&
+            this->time_point != tempEntry.time_point) {
+            return false; // time_point and timestamp string are inconsistent
+        }
+    } else {
+        // If timestamp string is empty, but time_point is set, it's okay (auto-generated timestamp will be used if needed).
+        // If both are empty, it's also okay, time_point will be auto-generated on withMetadata or toJson.
+    }
+
+
+    // Check 3: source_line consistency
+    if ((!source_file.empty() || !source_function.empty()) && source_line <= 0) {
+        return false; // Source file/function provided, but line number is invalid (<=0)
+    }
+
+    // All checks passed
+    return true;
 }
 
 int LogEntry::getSeverityValue() const
@@ -1695,6 +2357,44 @@ std::ostream &operator<<(std::ostream &os, const LogEntry &entry)
        << entry.message;
     return os;
 }
+
+// std::hash specialization for LogEntry
+namespace std {
+    size_t hash<LogEntry>::operator()(const LogEntry& entry) const noexcept {
+        size_t seed = 0;
+
+        // Hash fundamental types
+        // Note: hashing enum directly might not be portable, static_cast to underlying type
+        hash_combine(seed, static_cast<std::underlying_type_t<LogLevel>>(entry.level));
+        hash_combine(seed, entry.message);
+        hash_combine(seed, entry.process_id);
+        hash_combine(seed, entry.host_name);
+        hash_combine(seed, entry.app_name);
+        hash_combine(seed, entry.source_file);
+        hash_combine(seed, entry.source_function);
+        hash_combine(seed, entry.source_line);
+        hash_combine(seed, entry.thread_id);
+        hash_combine(seed, entry.thread_name);
+        hash_combine(seed, entry.trace_id);
+        hash_combine(seed, entry.span_id);
+
+        // Hash time_point (use count for nanoseconds precision)
+        hash_combine(seed, entry.time_point.time_since_epoch().count());
+
+        // Hash tags (std::set is ordered, so direct hashing of elements is stable)
+        for (const auto& tag : entry.tags) {
+            hash_combine(seed, tag);
+        }
+
+        // Hash attributes (std::map is ordered, so direct hashing of key-value pairs is stable)
+        for (const auto& pair : entry.attributes) {
+            hash_combine(seed, pair.first);
+            hash_combine(seed, pair.second); // Uses std::hash<LogValue>
+        }
+
+        return seed;
+    }
+} // namespace std
 
 LogLevel parseLogLevel(const std::string &level_str)
 {
