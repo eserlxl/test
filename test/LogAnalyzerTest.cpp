@@ -135,11 +135,17 @@ TEST_F(LogAnalyzerTest, MaxErrorsLimit)
     config.line_pattern = R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] (.*)$)";
     config.max_errors = 3;
 
+    size_t error_callback_count = 0;
+    config.error_callback = [&](const ParseError &e) {
+        error_callback_count++;
+    };
+
     analyzer.setParsingConfig(config);
     auto result = analyzer.loadFileWithStats(badFile);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->error_count, 3);
+    EXPECT_EQ(error_callback_count, 3); // Verify callback count
     EXPECT_EQ(result->loaded_count, 0);
 }
 
