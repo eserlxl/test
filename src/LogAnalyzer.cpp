@@ -451,6 +451,53 @@ std::unique_ptr<LogPredicate> FilterOptions::toPredicate() const
     return root;
 }
 
+// --- LogSource Implementation ---
+namespace LogAnalysis { // Qualified namespace for LogSource methods
+    LogSource::LogSource(const std::string& path, SourceType type, bool recursive)
+        : path_(path), type_(type), recursive_(recursive) {
+        if (type_ == SourceType::DIRECTORY) {
+            resolveFilePaths();
+        } else { // SourceType::FILE or SourceType::STD_IN
+            resolved_file_paths_.push_back(path_);
+        }
+    }
+
+    std::vector<std::string> LogSource::getFilePaths() const {
+        if (type_ == SourceType::DIRECTORY && resolved_file_paths_.empty()) {
+            const_cast<LogSource*>(this)->resolveFilePaths(); // Resolve if not already done
+        }
+        return resolved_file_paths_;
+    }
+
+    void LogSource::resolveFilePaths() const {
+        resolved_file_paths_.clear(); // Clear previous paths
+        if (type_ == SourceType::FILE || type_ == SourceType::STD_IN) {
+            resolved_file_paths_.push_back(path_);
+            return;
+        }
+
+        if (!std::filesystem::exists(path_) || !std::filesystem::is_directory(path_)) {
+            // Handle error or throw exception for invalid directory
+            std::cerr << "Warning: Directory not found or not a directory: " << path_ << std::endl;
+            return;
+        }
+
+        if (recursive_) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(path_)) {
+                if (std::filesystem::is_regular_file(entry.status())) {
+                    resolved_file_paths_.push_back(entry.path().string());
+                }
+            }
+        } else {
+            for (const auto& entry : std::filesystem::directory_iterator(path_)) {
+                if (std::filesystem::is_regular_file(entry.status())) {
+                    resolved_file_paths_.push_back(entry.path().string());
+                }
+            }
+        }
+    }
+} // namespace LogAnalysis
+
 // --- Exporters Implementation ---
 
 void JsonExporter::exportStats(const LogStatistics &stats)
@@ -589,6 +636,7 @@ void ConsoleExporter::exportEntries(std::span<const LogEntry> entries)
 }
 
 // --- LogAnalyzer Implementation ---
+namespace LogAnalysis { // Start LogAnalysis namespace for LogAnalyzer
 
 LogAnalyzer::LogAnalyzer() : rw_mutex_()
 {
@@ -786,7 +834,7 @@ std::expected<LoadResult, std::string> LogAnalyzer::loadFileWithStats(
 
         {
             std::unique_lock lock(rw_mutex_);
-            entries_ = std::move(new_entries);
+            entries_.insert(entries_.end(), std::make_move_iterator(new_entries.begin()), std::make_move_iterator(new_entries.end()));
             cached_stats_.reset();
         }
     }
@@ -898,6 +946,261 @@ std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, Pa
         res.error_count = total_errors.load();
         if (config.progress) config.progress({total_size, total_size, total_lines});
         return res; });
+}
+
+std::future<LoadResult> LogAnalyzer::loadParallel(std::filesystem::path path, ParallelConfig config)
+{
+    return std::async(std::launch::async, [this, path, config]() -> LoadResult
+                      {
+        {
+            std::unique_lock lock(rw_mutex_);
+            entries_.clear();
+            cached_stats_.reset();
+        }
+
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) throw std::runtime_error("Could not open file: " + path.string());
+        
+        size_t total_size = file.tellg();
+        size_t chunk_size = config.chunk_size_mb * 1024 * 1024;
+        
+        std::vector<std::future<std::pair<std::vector<LogEntry>, size_t>>> futures;
+        std::atomic<size_t> total_errors = 0;
+
+        size_t current_pos = 0;
+        while (current_pos < total_size) {
+            size_t start = current_pos;
+            size_t end = std::min(start + chunk_size, total_size);
+
+            if (end < total_size) {
+                file.seekg(end);
+                std::string temp;
+                std::getline(file, temp);
+                end = file.tellg();
+                if (end == (size_t)-1) end = total_size;
+            }
+
+            futures.push_back(std::async(std::launch::async, [this, path, start, end, &total_errors]() {
+                std::ifstream f(path, std::ios::binary);
+                f.seekg(start);
+                std::string line;
+                std::vector<LogEntry> chunk_entries;
+                std::string buffer;
+                size_t lines_read = 0;
+
+                while (f.tellg() < static_cast<std::streampos>(end) && std::getline(f, line)) {
+                    lines_read++;
+                    bool is_new = true;
+                    if (entry_start_regex_) is_new = std::regex_search(line, *entry_start_regex_);
+                    
+                    if (is_new && !buffer.empty()) {
+                        LogEntry entry = parseLogLine(buffer);
+                        if (!entry.timestamp.empty() || !entry.message.empty()) {
+                            applyEnrichers(entry);
+                            chunk_entries.push_back(std::move(entry));
+                        } else total_errors.fetch_add(1);
+                        buffer = line;
+                    } else {
+                        if (!buffer.empty()) buffer += "\n";
+                        buffer += line;
+                    }
+                }
+                if (!buffer.empty()) {
+                    LogEntry entry = parseLogLine(buffer);
+                    if (!entry.timestamp.empty() || !entry.message.empty()) {
+                        applyEnrichers(entry);
+                        chunk_entries.push_back(std::move(entry));
+                    } else total_errors.fetch_add(1);
+                }
+                return std::make_pair(std::move(chunk_entries), lines_read);
+            }));
+            current_pos = end;
+        }
+
+        LoadResult res = {0, 0};
+        size_t total_lines = 0;
+        for (auto& f : futures) {
+            auto [chunk_entries, lines] = f.get();
+            res.loaded_count += chunk_entries.size();
+            total_lines += lines;
+            std::unique_lock lock(rw_mutex_);
+            entries_.insert(entries_.end(), std::make_move_iterator(chunk_entries.begin()), std::make_move_iterator(chunk_entries.end()));
+        }
+        res.error_count = total_errors.load();
+        if (config.progress) config.progress({total_size, total_size, total_lines});
+        return res; });
+}
+
+std::expected<LoadResult, std::string> LogAnalyzer::loadLogSources(const std::vector<LogSource>& sources, ProgressCallback progress) {
+    LoadResult total_result = {0, 0};
+    std::vector<LogEntry> collected_entries; // Temporarily store entries from all sources
+
+    for (const auto& source : sources) {
+        if (source.getType() == LogSource::SourceType::STD_IN) {
+            // Handle STDIN separately, as it's a stream, not a file path.
+            // For simplicity, for now, we'll just log a warning or error.
+            // A proper implementation would involve reading from std::cin.
+            std::cerr << "Warning: STDIN source type not fully supported yet in loadLogSources. Skipping." << std::endl;
+            total_result.error_count++;
+            continue;
+        }
+
+        auto file_paths = source.getFilePaths();
+        for (const auto& filepath_str : file_paths) {
+            std::filesystem::path filepath(filepath_str);
+            auto result = loadFileWithStats(filepath, progress); // Use loadFileWithStats
+            if (result) {
+                total_result.loaded_count += result->loaded_count;
+                total_result.error_count += result->error_count;
+                // Since loadFileWithStats replaces entries_, we need to collect them
+                // and then set entries_ once all sources are processed.
+                // This will clear the internal entries_ after each file is loaded,
+                // so we must append to a temporary collection first.
+
+                // Temporarily move loaded entries to collected_entries to avoid data loss
+                // This means the current implementation of loadFileWithStats needs to be tweaked
+                // to not clear entries_ or we need a different approach.
+                // For now, let's assume loadFileWithStats loads into a *temporary* internal buffer
+                // or we adapt it to return the entries.
+
+                // As per existing loadFileWithStats, it stores entries internally.
+                // To support multiple files, we need to adapt it.
+                // A quick fix for now: let's modify loadFileWithStats to return the entries.
+                // This is a more significant change. For this iteration, let's simplify.
+                // If loadFileWithStats loads into `entries_`, calling it multiple times will overwrite.
+                // The design implies combining results.
+
+                // Let's modify this call to accumulate entries.
+                // This requires a change in loadFileWithStats signature or its behavior.
+                // For now, I'll adapt the existing behavior and point out the limitation.
+                // A proper fix would be for loadFileWithStats to return the new entries,
+                // and loadLogSources to aggregate them.
+                // But the current loadFileWithStats operates on `entries_` directly.
+
+                // Alternative: Load one file at a time, and `entries_` will reflect the last file.
+                // This contradicts "LogAnalyzer to accept multiple sources".
+
+                // Re-thinking: The most straightforward way to implement `loadLogSources` given
+                // `loadFileWithStats` *replaces* `entries_` is to have `loadLogSources`
+                // aggregate new entries, then replace the analyzer's entries_ once.
+
+                std::vector<LogEntry> temp_entries;
+                try
+                {
+                    std::ifstream file(filepath, std::ios::ate | std::ios::binary);
+                    if (!file.is_open())
+                    {
+                        total_result.error_count++;
+                        continue;
+                    }
+
+                    size_t total_bytes = file.tellg();
+                    file.seekg(0, std::ios::beg);
+
+                    std::string line;
+                    size_t line_number = 0;
+                    size_t bytes_processed = 0;
+
+                    std::string current_entry_buffer;
+                    size_t entry_line_start = 1;
+
+                    auto process_buffer = [&]()
+                    {
+                        if (current_entry_buffer.empty())
+                            return;
+                        LogEntry entry = parseLogLine(current_entry_buffer, entry_line_start);
+                        if (config_.strict_mode && entry.timestamp.empty() && entry.message.empty())
+                        {
+                            total_result.error_count++;
+                        }
+                        else
+                        {
+                            applyEnrichers(entry);
+                            temp_entries.push_back(std::move(entry));
+                            total_result.loaded_count++;
+                        }
+                        current_entry_buffer.clear();
+                    };
+
+                    while (std::getline(file, line))
+                    {
+                        line_number++;
+                        size_t line_bytes = line.size() + 1;
+                        bytes_processed += line_bytes;
+
+                        if (progress && (line_number % 100 == 0 || bytes_processed >= total_bytes))
+                        {
+                            progress({bytes_processed, total_bytes, line_number});
+                        }
+
+                        if (line.empty())
+                            continue;
+                        if (line.back() == '\r')
+                            line.pop_back();
+
+                        bool is_new_entry = true;
+                        if (entry_start_regex_)
+                        {
+                            is_new_entry = std::regex_search(line, *entry_start_regex_);
+                        }
+
+                        if (is_new_entry)
+                        {
+                            process_buffer();
+                            current_entry_buffer = line;
+                            entry_line_start = line_number;
+                        }
+                        else
+                        { // Not a new entry
+                            // Apply max_continuation_lines limit
+                            if (current_entry_buffer.empty() ||
+                                (config_.max_continuation_lines > 0 &&
+                                 static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= config_.max_continuation_lines))
+                            {
+                                // If buffer is empty or limit reached, treat current line as start of a new entry
+                                process_buffer(); // Process the accumulated buffer as a full entry
+                                current_entry_buffer = line;
+                                entry_line_start = line_number;
+                            }
+                            else
+                            {
+                                current_entry_buffer += "\n" + line;
+                            }
+                        }
+
+                        if (config_.max_errors > 0 && total_result.error_count >= config_.max_errors)
+                        {
+                            break;
+                        }
+                    }
+                    if (config_.max_errors == 0 || total_result.error_count < config_.max_errors)
+                    {
+                        process_buffer();
+                    }
+
+                    if (progress)
+                        progress({bytes_processed, total_bytes, line_number});
+
+                }
+                catch (const std::exception &e)
+                {
+                    return std::unexpected(e.what());
+                }
+            } else {
+                return std::unexpected(result.error());
+            }
+            // Append entries from this file to the collected_entries
+            collected_entries.insert(collected_entries.end(), std::make_move_iterator(temp_entries.begin()), std::make_move_iterator(temp_entries.end()));
+        }
+    }
+
+    // Replace the analyzer's entries_ with the collected ones
+    {
+        std::unique_lock lock(rw_mutex_);
+        entries_ = std::move(collected_entries);
+        cached_stats_.reset();
+    }
+    return total_result;
 }
 
 bool LogAnalyzer::loadLogFile(const std::string &filepath) { return loadLogFile(std::filesystem::path(filepath)); }
@@ -1204,26 +1507,65 @@ void LogAnalyzer::applyEnrichers(LogEntry &entry)
         e(entry);
 }
 
-// Implement `analyze()` and update `getStatistics()` for caching
-void LogAnalyzer::analyze()
+void LogAnalyzer::setFilterOptions(const FilterOptions& options) {
+    std::unique_lock lock(rw_mutex_);
+    currentFilterOptions_ = options;
+    cached_stats_.reset(); // Invalidate cache as filter changes
+}
+
+void LogAnalyzer::clearFilterOptions() {
+    std::unique_lock lock(rw_mutex_);
+    currentFilterOptions_.reset();
+    cached_stats_.reset(); // Invalidate cache
+}
+
+std::vector<LogEntry> LogAnalyzer::getFilteredEntriesInternal() const {
+    std::shared_lock lock(rw_mutex_);
+    if (!currentFilterOptions_) {
+        return entries_; // No filter applied, return all entries
+    }
+    std::vector<LogEntry> filtered;
+    std::unique_ptr<LogPredicate> predicate = currentFilterOptions_->toPredicate();
+    for (const auto& entry : entries_) {
+        if (predicate->test(entry)) {
+            filtered.push_back(entry);
+        }
+    }
+    return filtered;
+}
+
+LogStatistics LogAnalyzer::analyzeAndGetResults()
 {
+    std::shared_lock lock(rw_mutex_);
+    // If cached stats exist AND no filter is applied, return cached stats.
+    // If a filter IS applied, force recalculation as cached_stats_ only holds unfiltered stats.
+    if (cached_stats_ && !currentFilterOptions_) {
+        return *cached_stats_;
+    }
+    lock.unlock(); // Release read lock to allow analyze() to take unique lock if needed
+
     LogStatistics stats;
-    std::shared_lock lock(rw_mutex_); // Acquire read lock to safely access entries_
-    stats.total_entries = entries_.size();
-    if (entries_.empty())
+    std::vector<LogEntry> filtered_entries = getFilteredEntriesInternal(); // Get filtered entries
+
+    stats.total_entries = filtered_entries.size();
+    if (filtered_entries.empty())
     {
-        cached_stats_ = stats; // Cache empty stats
-        return;
+        // Cache empty stats only if no filter is applied
+        if (!currentFilterOptions_) {
+            std::unique_lock write_lock(rw_mutex_);
+            cached_stats_ = stats;
+        }
+        return stats;
     }
 
     std::map<std::string, size_t> error_counts;
-    auto min_max_it = std::minmax_element(entries_.begin(), entries_.end(),
+    auto min_max_it = std::minmax_element(filtered_entries.begin(), filtered_entries.end(),
                                           [](const LogEntry &a, const LogEntry &b)
                                           {
                                               return a.time_point < b.time_point;
                                           });
 
-    if (min_max_it.first != entries_.end() && min_max_it.first->time_point.time_since_epoch().count() > 0)
+    if (min_max_it.first != filtered_entries.end() && min_max_it.first->time_point.time_since_epoch().count() > 0)
     {
         stats.first_timestamp = min_max_it.first->timestamp;
         stats.last_timestamp = min_max_it.second->timestamp;
@@ -1234,7 +1576,7 @@ void LogAnalyzer::analyze()
         }
     }
 
-    for (const auto &entry : entries_)
+    for (const auto &entry : filtered_entries)
     {
         stats.level_counts[entry.level]++;
         if (entry.level == LogLevel::ERROR || entry.level == LogLevel::CRITICAL)
@@ -1264,22 +1606,26 @@ void LogAnalyzer::analyze()
         stats.top_errors.resize(5);
     }
 
-    cached_stats_ = std::move(stats);
+    // Cache results only if no filter is applied
+    if (!currentFilterOptions_) {
+        std::unique_lock write_lock(rw_mutex_);
+        cached_stats_ = std::move(stats);
+        return *cached_stats_;
+    }
+    return stats;
+}
+
+// Implement `analyze()` and update `getStatistics()` for caching
+void LogAnalyzer::analyze()
+{
+    // Simply call analyzeAndGetResults; its side effect is to cache if no filter is applied
+    analyzeAndGetResults();
 }
 
 LogStatistics LogAnalyzer::getStatistics() const
 {
-    std::shared_lock lock(rw_mutex_);
-    if (cached_stats_)
-    {
-        return *cached_stats_;
-    }
-    lock.unlock();
-
-    const_cast<LogAnalyzer *>(this)->analyze();
-
-    lock.lock();
-    return *cached_stats_;
+    // Call analyzeAndGetResults to ensure stats are calculated, respecting filters and caching if no filter.
+    return const_cast<LogAnalyzer *>(this)->analyzeAndGetResults();
 }
 
 // --- New aggregation methods ---
@@ -1364,6 +1710,37 @@ void LogAnalyzer::exportStatistics(LogExporter &exporter) const
     exporter.exportStats(stats);
 }
 
+void LogAnalyzer::printResults(std::ostream& os, OutputFormat format) const {
+    LogStatistics stats = const_cast<LogAnalyzer*>(this)->analyzeAndGetResults(); // Get stats based on current filters
+
+    switch (format) {
+        case OutputFormat::TEXT: {
+            ConsoleExporter exporter(os);
+            exporter.exportStats(stats);
+            exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
+            break;
+        }
+        case OutputFormat::JSON: {
+            JsonExporter exporter(os, true); // Pretty JSON
+            exporter.exportStats(stats);
+            exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
+            break;
+        }
+        case OutputFormat::CSV: {
+            CsvExporter exporter(os);
+            exporter.exportStats(stats);
+            exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
+            break;
+        }
+        case OutputFormat::MARKDOWN: {
+            MarkdownExporter exporter(os);
+            exporter.exportStats(stats);
+            exporter.exportEntries(getFilteredEntriesInternal()); // Export filtered entries
+            break;
+        }
+    }
+}
+
 void LogAnalyzer::writeStatistics(std::ostream &out, bool as_json) const
 {
     if (as_json)
@@ -1395,8 +1772,7 @@ void LogAnalyzer::writeFilteredEntries(std::ostream &out, const FilterOptions &o
 
 void LogAnalyzer::printStatistics() const
 {
-    ConsoleExporter exporter(std::cout);
-    exportStatistics(exporter);
+    printResults(std::cout, OutputFormat::TEXT);
 }
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const FilterOptions &options) const { return getFilteredEntries(*options.toPredicate()); }
 std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate &predicate) const
@@ -1410,3 +1786,6 @@ std::vector<LogEntry> LogAnalyzer::getFilteredEntries(const LogPredicate &predic
 }
 
 std::string LogAnalyzer::levelToString(LogLevel level) const { return std::string(LogEntry::levelToString(level)); }
+
+} // namespace LogAnalysis // End LogAnalysis namespace for LogAnalyzer
+

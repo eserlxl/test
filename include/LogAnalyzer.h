@@ -20,6 +20,43 @@
 #include <memory>
 #include <thread>
 #include <shared_mutex>
+#include <stdexcept> // For std::runtime_error
+
+namespace LogAnalysis { // Consider a namespace for better organization
+
+// Represents a collection of log files/sources
+class LogSource {
+public:
+    enum class SourceType { FILE, DIRECTORY, STD_IN };
+
+    // Constructor for file paths
+    explicit LogSource(const std::string& path, SourceType type = SourceType::FILE, bool recursive = false);
+
+    // Get all individual log file paths to process
+    std::vector<std::string> getFilePaths() const;
+
+    SourceType getType() const { return type_; }
+    const std::string& getPath() const { return path_; }
+    bool isRecursive() const { return recursive_; }
+
+private:
+    std::string path_;
+    SourceType type_;
+    bool recursive_;
+    // Internal list of resolved file paths
+    mutable std::vector<std::string> resolved_file_paths_; 
+    void resolveFilePaths() const; // Helper to populate resolved_file_paths_
+};
+
+enum class OutputFormat {
+    TEXT, // Human-readable, similar to current printStatistics
+    JSON,
+    CSV,
+    MARKDOWN
+    // Add more formats as needed (e.g., XML, YAML)
+};
+
+} // namespace LogAnalysis
 
 struct LogStatistics {
     size_t total_entries = 0;
@@ -251,6 +288,9 @@ public:
         ParallelConfig config = {}
     );
 
+    // New: Load from multiple LogSource objects
+    std::expected<LoadResult, std::string> loadLogSources(const std::vector<LogAnalysis::LogSource>& sources, ProgressCallback progress = nullptr);
+
     // Legacy Loading
     bool loadLogFile(const std::string& filepath);
     bool loadLogFile(const std::filesystem::path& filepath);
@@ -277,9 +317,14 @@ public:
     // Testing Support
     void addEntry(LogEntry entry);
 
-    // Analysis
-    void analyze();
-    LogStatistics getStatistics() const;
+    // Analysis and Filtering
+    void analyze(); // This will now apply current filters
+    LogStatistics getStatistics() const; // This will now apply current filters
+    LogStatistics analyzeAndGetResults(); // New: Performs analysis and returns structured results (applies current filters)
+
+    // Set filter options for subsequent analysis/retrieval operations
+    void setFilterOptions(const FilterOptions& options);
+    void clearFilterOptions();
 
     // Iteration 1: New aggregation and transformation APIs
     std::map<LogValue, size_t> getFrequencyMap(std::string_view attribute_key) const;
@@ -296,8 +341,12 @@ public:
     void exportTo(LogExporter& exporter) const;
     void exportFilteredTo(LogExporter& exporter, const LogPredicate& predicate) const;
     void exportStatistics(LogExporter& exporter) const;
+
+    // New: Prints the analysis results to an ostream in a specified format
+    void printResults(std::ostream& os, LogAnalysis::OutputFormat format = LogAnalysis::OutputFormat::TEXT) const;
     
-    // Legacy Output
+    // Legacy Output (will be deprecated or changed to call printResults)
+    [[deprecated("Use printResults() instead for structured output control.")]]
     void printStatistics() const;
     [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const FilterOptions& options) const;
     [[nodiscard]] std::vector<LogEntry> getFilteredEntries(const LogPredicate& predicate) const;
@@ -312,15 +361,19 @@ private:
     std::optional<std::regex> entry_start_regex_;
 
     std::vector<LogEnricher> enrichers_;
+    std::optional<FilterOptions> currentFilterOptions_; // New: Stores current filter for analyze/getStatistics
 
     LogEntry parseLogLine(const std::string& line, size_t line_number = 0);
     std::string levelToString(LogLevel level) const;
-    bool matchFilter(const LogEntry& entry, const FilterOptions& options) const;
+    bool matchFilter(const LogEntry& entry, const FilterOptions& options) const; // Keep for internal use if needed
     void applyEnrichers(LogEntry& entry);
+    std::vector<LogEntry> getFilteredEntriesInternal() const; // Helper to apply currentFilterOptions_
 
     std::map<std::string, int> named_group_indices_;
     mutable std::shared_mutex rw_mutex_; // Changed to shared_mutex
     mutable std::optional<LogStatistics> cached_stats_; // For caching statistics
 };
+
+} // namespace LogAnalysis
 
 #endif // LOG_ANALYZER_H
