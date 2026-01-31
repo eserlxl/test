@@ -12,7 +12,9 @@ A powerful C++ project designed for structured log parsing, analysis, and proces
 
 ## Features
 
-The `LogEntry` class is at the heart of the `logAnalyzer`, offering a comprehensive model for log data:
+### `LogEntry` Features
+
+The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive model for log data:
 
 *   **Structured Logging**: Supports key-value pairs for `attributes` using a flexible `LogValue` variant type (supporting bool, int64, uint64, double, string, binary data, duration, lists, and objects).
 *   **Rich Metadata**: Each log entry can store:
@@ -35,6 +37,25 @@ The `LogEntry` class is at the heart of the `logAnalyzer`, offering a comprehens
     *   Binary data encoding (Hex, Base64)
     *   Custom `strftime` format for timestamps
 *   **Comparison and Utilities**: Supports comparison operations, level parsing, and conversion to `std::map<std::string, LogValue>`.
+
+### `LogAnalyzer` Features
+
+The `LogAnalyzer` class provides a high-level interface for processing, analyzing, and exporting log data:
+
+*   **Versatile Log Loading**: Process logs from various sources, including single files, directories (recursively), and standard input. Supports high-performance parallel and asynchronous file loading.
+*   **Real-time Monitoring**: Live-monitor log files with `tailFile`, providing a `tail -f`-like capability to process new log entries as they are written.
+*   **Flexible Parsing**: A powerful and configurable regex-based engine (`ParsingConfig`) allows for parsing a wide variety of log formats, with support for multi-line log entries, named capture groups, and custom field parsers.
+*   **Powerful Filtering Engine**:
+    *   **User-Friendly Query Language**: Filter logs using simple, intuitive query strings (e.g., `level:ERROR AND http.status >= 500`).
+    *   **Composable Predicates**: Programmatically build complex filter logic using a tree of predicates (`And`, `Or`, `Not`, `Keyword`, `Regex`, `Attribute`, `TimeRange`, etc.).
+*   **Advanced Analysis**: Go beyond simple counts with advanced statistical analysis, configurable via `AnalysisConfig`:
+    *   **Message Templating**: Group similar log messages into templates to identify common event types.
+    *   **Attribute Analysis**: Compute value distributions and top-N occurrences for specified attributes to understand trends.
+*   **Log Enrichment and Anonymization**:
+    *   **Enrichment**: Add contextual information to log entries on-the-fly using custom `LogEnricher` functions.
+    *   **Anonymization**: Automatically find and redact sensitive data (like PII, passwords, or tokens) using the `LogAnonymizer` framework and `RegexAnonymizer`.
+*   **Configuration Persistence**: Serialize parsing (`ParsingConfig`) and filtering (`FilterOptions`) configurations to and from JSON, making it easy to save, share, and reuse settings.
+*   **Multiple Export Formats**: Export analysis results or filtered log entries to various formats, including human-readable text, JSON, CSV, and Markdown, using a flexible `LogExporter` interface.
 
 ## Build Instructions
 
