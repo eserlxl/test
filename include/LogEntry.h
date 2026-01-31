@@ -151,7 +151,6 @@ struct LogValue : LogValueBase {
     // New: operator[] for LogObject (by key)
     LogValue& operator[](std::string_view key);
     const LogValue& operator[](std::string_view key) const;
-
     // New: Optional Access (returns nullptr on mismatch, like std::get_if)
     template<typename T> const T* get_if() const noexcept { return std::get_if<T>(static_cast<const LogValueBase*>(this)); }
     template<typename T> T* get_if() noexcept { return std::get_if<T>(static_cast<LogValueBase*>(this)); }
@@ -163,22 +162,6 @@ struct LogValue : LogValueBase {
     // New: Comparison operators
     std::partial_ordering operator<=>(const LogValue& other) const; // Remove default to implement manually
     bool operator==(const LogValue& other) const; // Remove default to implement manually
-
-    // New: Safe access with a fallback
-    template<typename T> T get_or_default(const T& default_value) const {
-        if (auto p = get_if<T>()) {
-            return *p;
-        }
-        return default_value;
-    }
-
-    // New: operator[] for LogList (by index)
-    LogValue& operator[](size_t index);
-    const LogValue& operator[](size_t index) const;
-
-    // New: operator[] for LogObject (by key)
-    LogValue& operator[](std::string_view key);
-    const LogValue& operator[](std::string_view key) const;
 }; // Closing brace for LogValue
 
 // Global function or friend method within LogValue
@@ -556,9 +539,10 @@ namespace std {
     };
 }
 
+namespace std {
 // Formatter specialization
 template <>
-struct std::formatter<LogEntry> {
+struct formatter<LogEntry> {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
@@ -570,6 +554,7 @@ struct std::formatter<LogEntry> {
             entry.message);
     }
 };
+} // namespace std
 
 
 

@@ -218,7 +218,7 @@ std::optional<std::chrono::nanoseconds> LogValue::asDuration() const {
 LogValue& LogValue::operator[](size_t index) {
     auto list_ptr = get_if<std::shared_ptr<LogList>>();
     if (!list_ptr || !*list_ptr) {
-        throw std::bad_variant_access("LogValue does not hold a LogList or is null when accessing by index.");
+        throw std::bad_variant_access();
     }
     if (index >= (*list_ptr)->size()) {
         throw std::out_of_range("LogList index out of bounds.");
@@ -229,7 +229,7 @@ LogValue& LogValue::operator[](size_t index) {
 const LogValue& LogValue::operator[](size_t index) const {
     auto list_ptr = get_if<std::shared_ptr<LogList>>();
     if (!list_ptr || !*list_ptr) {
-        throw std::bad_variant_access("LogValue does not hold a LogList or is null when accessing by index.");
+        throw std::bad_variant_access();
     }
     if (index >= (*list_ptr)->size()) {
         throw std::out_of_range("LogList index out of bounds.");
@@ -251,7 +251,7 @@ LogValue& LogValue::operator[](std::string_view key) {
 const LogValue& LogValue::operator[](std::string_view key) const {
     auto obj_ptr = get_if<std::shared_ptr<LogObject>>();
     if (!obj_ptr || !*obj_ptr) {
-        throw std::bad_variant_access("LogValue does not hold a LogObject or is null when accessing by key.");
+        throw std::bad_variant_access();
     }
     // std::map::at() throws std::out_of_range if key not found
     return (**obj_ptr).at(std::string(key));
@@ -432,7 +432,7 @@ struct LogValueSharedPtrHasher {
 // std::hash specialization for LogValue
 namespace std {
     size_t hash<LogValue>::operator()(const LogValue& lv) const noexcept {
-        return std::visit([](auto&& arg) -> size_t {
+        return std::visit([&](auto&& arg) -> size_t {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, std::monostate>) {
                 return std::hash<int>{}(0); // Hash of null
@@ -1962,7 +1962,7 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
 
             if (auto s_ptr = val_res->asString())
             {
-                entry.timestamp = *s_ptr;
+                entry.timestamp = *(*s_ptr);
                 entry.parseTime();
             }
             else if (auto i = val_res->asInt64())
@@ -1997,12 +1997,10 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
                 return std::unexpected("Failed to parse process_id: " + val_res.error());
             if (val_res->is<uint64_t>())
             {
-                entry.process_id = val_res->get<uint64_t>();
-            }
+                                 entry.process_id = val_res->to<uint64_t>();            }
             else if (val_res->is<int64_t>())
             {
-                entry.process_id = static_cast<uint64_t>(val_res->get<int64_t>());
-            }
+                                 entry.process_id = static_cast<uint64_t>(val_res->to<int64_t>());            }
             else
             {
                 return std::unexpected("process_id must be a number");
@@ -2037,11 +2035,11 @@ std::expected<LogEntry, std::string> LogEntry::fromJson(std::string_view json_st
 
             if (auto file_val = obj_res->find("file"); file_val != obj_res->end()) {
                 if (auto s_ptr = file_val->second.asString())
-                    entry.source_file = *s_ptr;
+                    entry.source_file = *(*s_ptr);
             }
             if (auto func_val = obj_res->find("function"); func_val != obj_res->end()) {
                 if (auto s_ptr = func_val->second.asString())
-                    entry.source_function = *s_ptr;
+                    entry.source_function = *(*s_ptr);
             }
             if (auto line_val = obj_res->find("line"); line_val != obj_res->end()) {
                 if (auto i = line_val->second.asInt64())

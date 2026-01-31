@@ -589,13 +589,13 @@ namespace Filters
                 if (auto p_str_optional = entry_value.asString(); p_str_optional.has_value()) { // p_str_optional is optional<const string*>
                     entry_str_view.emplace(**p_str_optional); // **p_str_optional is const string&
                 } else if (entry_value.is(ValueType::Int64)) {
-                    temp_entry_str = std::to_string(entry_value.get<int64_t>());
+                    temp_entry_str = std::to_string(entry_value.to<int64_t>());
                     entry_str_view.emplace(temp_entry_str.value());
                 } else if (entry_value.is(ValueType::UInt64)) {
-                    temp_entry_str = std::to_string(entry_value.get<uint64_t>());
+                    temp_entry_str = std::to_string(entry_value.to<uint64_t>());
                     entry_str_view.emplace(temp_entry_str.value());
                 } else if (entry_value.is(ValueType::Double)) {
-                    temp_entry_str = std::to_string(entry_value.get<double>());
+                    temp_entry_str = std::to_string(entry_value.to<double>());
                     entry_str_view.emplace(temp_entry_str.value());
                 }
 
@@ -604,13 +604,13 @@ namespace Filters
                 if (auto p_str_optional = condition_value.asString(); p_str_optional.has_value()) {
                     condition_str_view.emplace(**p_str_optional);
                 } else if (condition_value.is(ValueType::Int64)) {
-                    temp_condition_str = std::to_string(condition_value.get<int64_t>());
+                    temp_condition_str = std::to_string(condition_value.to<int64_t>());
                     condition_str_view.emplace(temp_condition_str.value());
                 } else if (condition_value.is(ValueType::UInt64)) {
-                    temp_condition_str = std::to_string(condition_value.get<uint64_t>());
+                    temp_condition_str = std::to_string(condition_value.to<uint64_t>());
                     condition_str_view.emplace(temp_condition_str.value());
                 } else if (condition_value.is(ValueType::Double)) {
-                    temp_condition_str = std::to_string(condition_value.get<double>());
+                    temp_condition_str = std::to_string(condition_value.to<double>());
                     condition_str_view.emplace(temp_condition_str.value());
                 }
 
