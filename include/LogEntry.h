@@ -237,6 +237,52 @@ struct LogEntry {
     // Fluent API
     LogEntry& withLevel(LogLevel l);
     LogEntry& withMessage(std::string_view msg);
+    /**
+     * @brief Sets the message using a structured format string, automatically extracting arguments as attributes.
+     *        Similar to C++20's std::format, where {} placeholders can become attributes.
+     *        Example: entry.withStructuredMessage("User {} logged in from IP {}", "alice", "192.168.1.1");
+     *        This would set message to "User alice logged in from IP 192.168.1.1" and
+     *        add attributes like "arg0"="alice", "arg1"="192.168.1.1".
+     *        More advanced: entry.withStructuredMessage("User {user} logged in from IP {ip}", "alice", "192.168.1.1");
+     *        This would add attributes "user"="alice", "ip"="192.168.1.1".
+     * @param format The format string with placeholders.
+     * @param args The arguments to format and potentially extract as attributes.
+     * @return Reference to the LogEntry for chaining.
+     */
+    template <typename... Args>
+    LogEntry& withStructuredMessage(std::string_view format, Args&&... args) {
+        // Format the message
+        this->message = std::vformat(format, std::make_format_args(args...));
+
+        // Extract positional arguments as attributes (arg0, arg1, ...)
+        int arg_idx = 0;
+        // This fold expression will execute the lambda for each argument
+        ( (this->attributes["arg" + std::to_string(arg_idx++)] = [](auto&& arg) -> LogValue {
+            // Attempt to convert argument to LogValue.
+            // This is a simplified conversion; a real implementation might need more specific handling
+            // for different types (e.g., custom types, enums).
+            if constexpr (std::is_convertible_v<decltype(arg), std::string_view>) {
+                return LogValue(static_cast<std::string_view>(arg));
+            } else if constexpr (std::is_integral_v<decltype(arg)> && !std::is_same_v<bool, std::decay_t<decltype(arg)>>) {
+                if constexpr (std::is_signed_v<decltype(arg)>) {
+                    return LogValue(static_cast<int64_t>(arg));
+                } else {
+                    return LogValue(static_cast<uint64_t>(arg));
+                }
+            } else if constexpr (std::is_floating_point_v<decltype(arg)>) {
+                return LogValue(static_cast<double>(arg));
+            } else if constexpr (std::is_same_v<bool, std::decay_t<decltype(arg)>>) {
+                return LogValue(static_cast<bool>(arg));
+            } else {
+                // Fallback for types not directly convertible: use stringstream
+                std::ostringstream oss;
+                oss << arg;
+                return LogValue(oss.str());
+            }
+        }(std::forward<Args>(args))), ...);
+
+        return *this;
+    }
     LogEntry& withMetadata(); // Captures PID, Host, App, Thread, and Time if not set
     LogEntry& withAttribute(std::string_view key, LogValue value); // Existing
 

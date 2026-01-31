@@ -172,6 +172,9 @@ struct ParsingConfig {
     // Improved static helper
     static ParsingConfig fromRegexWithNamedGroups(std::string pattern);
 
+    // New: Factory method for JSON log format
+    static ParsingConfig jsonLogFormat();
+
     // NEW Iteration 8: Configuration Persistence
     // Serializes the ParsingConfig to a JSON string.
     std::string toJson() const;
@@ -179,6 +182,39 @@ struct ParsingConfig {
     // Deserializes a ParsingConfig from a JSON string.
     // Returns std::expected<ParsingConfig, std::string> for parsing errors.
     static std::expected<ParsingConfig, std::string> fromJson(std::string_view json_str);
+};
+
+// New: String comparison options for message_regex_pattern, keyword, and new string attributes
+enum class StringComparisonOp {
+    EQUALS,         // Exact match (case-sensitive or insensitive based on global case_sensitive flag)
+    CONTAINS,       // Substring check
+    STARTS_WITH,    // Prefix check
+    ENDS_WITH,      // Suffix check
+    REGEX           // Regular expression match
+};
+
+// New: Numeric comparison options for numeric attributes
+enum class NumericComparisonOp {
+    EQUALS,
+    NOT_EQUALS,
+    GT,             // Greater than
+    LT,             // Less than
+    GTE,            // Greater than or equal
+    LTE             // Less than or equal
+};
+
+// New: Structure to define a single attribute filter condition
+struct AttributeFilterCondition {
+    LogValue value;                         // The value to compare against
+    std::optional<StringComparisonOp> string_op; // Operator for string comparisons
+    std::optional<NumericComparisonOp> numeric_op; // Operator for numeric comparisons
+
+    // Constructor for string comparisons
+    // Added explicit to prevent unintended implicit conversions
+    explicit AttributeFilterCondition(LogValue val, StringComparisonOp op) : value(std::move(val)), string_op(op) {}
+    // Constructor for numeric comparisons
+    // Added explicit to prevent unintended implicit conversions
+    explicit AttributeFilterCondition(LogValue val, NumericComparisonOp op) : value(std::move(val)), numeric_op(op) {}
 };
 
 // Iteration 1: Composable Filtering
@@ -209,9 +245,25 @@ namespace Filters {
     std::unique_ptr<LogPredicate> ThreadId(std::string tid);
     std::unique_ptr<LogPredicate> SourceFile(std::string file);
 
+    // New: Predicate for advanced attribute filtering based on AttributeFilterCondition
+    std::unique_ptr<LogPredicate> Attribute(std::string attribute_name, AttributeFilterCondition condition, bool case_sensitive); // Added case_sensitive
+
+    // New: Predicate to check if an attribute exists
+    std::unique_ptr<LogPredicate> HasAttribute(std::string attribute_name);
+
+    // New: Predicate to check if an attribute does NOT exist
+    std::unique_ptr<LogPredicate> NotHasAttribute(std::string attribute_name);
+
+    // New: Predicate to check for absence of a tag
+    std::unique_ptr<LogPredicate> NotHasTag(std::string tag);
+
     std::unique_ptr<LogPredicate> And(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b);
     std::unique_ptr<LogPredicate> Or(std::unique_ptr<LogPredicate> a, std::unique_ptr<LogPredicate> b);
     std::unique_ptr<LogPredicate> Not(std::unique_ptr<LogPredicate> p);
+
+    // Extension: Or predicate to allow more than two arguments (variadic template)
+    template<typename... Predicates>
+    std::unique_ptr<LogPredicate> Or(Predicates&&... preds);
 
     // NEW Iteration 8: Query Language Parsing
     // Parses a query string into a LogPredicate tree.
@@ -229,6 +281,7 @@ struct FilterOptions {
     bool invert_match = false;
     std::vector<LogLevel> levels;
 
+
     std::optional<std::string> message_regex_pattern;
     
     std::optional<std::chrono::system_clock::time_point> start_tp;
@@ -239,6 +292,17 @@ struct FilterOptions {
 
     std::map<std::string, LogValue> attribute_matches;
     std::set<std::string> required_tags;
+
+    // New: For complex attribute comparisons (e.g., numeric range, string contains/starts_with/regex)
+    // Key: attribute name, Value: vector of conditions (implicitly ORed for the same attribute)
+    std::map<std::string, std::vector<AttributeFilterCondition>> attribute_filter_conditions;
+
+    // New: Filtering based on the absence of tags
+    std::set<std::string> excluded_tags;
+
+    // New: Support for OR logic between sets of attribute matches
+    // Each element in the vector represents an OR group. Inside each map, conditions are ANDed.
+    std::vector<std::map<std::string, LogValue>> attribute_or_matches;
 
     std::optional<std::chrono::system_clock::duration> since;
     std::vector<std::string> any_keywords;
@@ -342,16 +406,89 @@ private:
 };
 
 
+// Forward declaration for LogAnalyzer (needed by LogAnalyzerBuilder)
+class LogAnalyzer;
+
+/**
+ * @brief A fluent builder class to simplify complex LogAnalyzer setup.
+ *        Allows configuring various aspects of LogAnalyzer before construction.
+ */
+class LogAnalyzerBuilder {
+public:
+    LogAnalyzerBuilder();
+
+    // Configuration methods
+    LogAnalyzerBuilder& withParsingConfig(ParsingConfig config);
+    LogAnalyzerBuilder& withParsingProfile(const std::string& profileName);
+    LogAnalyzerBuilder& withAnalysisConfig(AnalysisConfig config);
+    LogAnalyzerBuilder& withInitialFilterOptions(FilterOptions options);
+    LogAnalyzerBuilder& withFilterQuery(const std::string& query);
+
+    // Extensibility
+    LogAnalyzerBuilder& addEnricher(LogEnricher enricher); // Use LogEnricher directly
+    LogAnalyzerBuilder& addAnonymizer(std::unique_ptr<LogAnonymizer> anonymizer); // Use LogAnonymizer
+
+    // Build method
+    std::unique_ptr<LogAnalyzer> build(); // Return unique_ptr to avoid move/copy issues
+
+private:
+    // Internal state for building LogAnalyzer
+    ParsingConfig current_parsing_config_;
+    AnalysisConfig current_analysis_config_;
+    std::optional<FilterOptions> initial_filter_options_;
+    std::optional<std::string> initial_filter_query_;
+    std::vector<LogEnricher> enrichers_; // Use LogEnricher directly
+    std::vector<std::unique_ptr<LogAnonymizer>> anonymizers_; // Use LogAnonymizer
+    // ... other potential configurations
+};
+
+
 class LogAnalyzer {
 public:
+    // Type alias for clarity, accessible within LogAnalyzer context.
+    // LogAnalyzerBuilder uses LogEnricher directly.
+    using EnricherFunction = LogEnricher; 
     LogAnalyzer();
+    // Defaulted move constructor and assignment operator to enable builder returning by value
+    LogAnalyzer(LogAnalyzer&&) noexcept = default;
+    LogAnalyzer& operator=(LogAnalyzer&&) noexcept = default;
+
+    // Delete copy constructor and assignment operator
+    LogAnalyzer(const LogAnalyzer&) = delete;
+    LogAnalyzer& operator=(const LogAnalyzer&) = delete;
     
     // Configuration
-    void setParsingConfig(const ParsingConfig& config);
+    /**
+     * @brief Sets a new parsing configuration for the analyzer.
+     * @param config The new ParsingConfig to use.
+     * @param reparseExisting If true, all currently loaded log entries will be re-parsed with the new config.
+     *                        Note: This can be a performance-intensive operation for large datasets.
+     */
+    void setParsingConfig(ParsingConfig config, bool reparseExisting = false);
     // NEW Iteration 8: Analysis Configuration
-    void setAnalysisConfig(const AnalysisConfig& config);
+    /**
+     * @brief Sets a new analysis configuration for the analyzer.
+     * @param config The new AnalysisConfig to use.
+     * @param reanalyzeExisting If true, all statistics will be recalculated based on the new config.
+     */
+    void setAnalysisConfig(AnalysisConfig config, bool reanalyzeExisting = false);
     void clearAnalysisConfig();
     void setCustomPatterns(std::string_view timestamp_regex, std::string_view level_regex);
+
+    /**
+     * @brief Loads a pre-defined parsing configuration profile.
+     * @param profileName The name of the parsing profile (e.g., "apache_common", "syslog_rfc5424", "json").
+     * @throws std::runtime_error if the profileName is not recognized.
+     */
+    void loadParsingProfile(const std::string& profileName);
+
+    /**
+     * @brief Registers a custom parsing configuration profile by name.
+     *        This allows users to define and reuse their own complex parsing setups.
+     * @param name The name to assign to the parsing profile.
+     * @param config The ParsingConfig to associate with the name.
+     */
+    static void registerParsingProfile(const std::string& name, ParsingConfig config);
 
     // Modern Loading
     std::expected<void, std::string> loadFile(const std::filesystem::path& filepath);
@@ -396,12 +533,72 @@ public:
         std::function<void(const ParseError&)> error_callback = nullptr
     );
 
+    /**
+     * @brief Starts tailing a log file, periodically checking for new entries and processing them.
+     *        Processed entries are added to the analyzer's internal store.
+     *        This operation can be stopped via `stopTailing()`.
+     * @param path The path to the log file to tail.
+     * @param interval The interval at which to check for new file content.
+     * @return A future that completes when the tailing process is stopped.
+     * @note This method typically runs in a separate thread.
+     */
+    std::future<void> startTailing(const std::filesystem::path& path, std::chrono::milliseconds interval = std::chrono::seconds(1));
+
+    /**
+     * @brief Stops any active tailing operations started by `startTailing()`.
+     */
+    void stopTailing();
+
     // Analysis
     std::expected<LogStatistics, std::string> analyzeStream(const std::filesystem::path& filepath);
 
     std::map<LogValue, size_t> getAttributeFrequency(std::string_view attr_key) const;
     std::vector<std::pair<std::chrono::system_clock::time_point, size_t>> getTimeline(std::chrono::system_clock::duration bucket_size) const;
     std::vector<LogEntry> getTrace(std::string_view trace_id) const;
+    
+    /**
+     * @brief Calculates comprehensive statistics for log entries matching the given filter options.
+     * @param options The FilterOptions to apply before calculating statistics.
+     * @return A LogStats object containing statistics for the filtered entries.
+     */
+    LogStatistics getFilteredStatistics(const FilterOptions& options) const;
+
+    /**
+     * @brief Calculates comprehensive statistics for log entries matching the given predicate.
+     * @param predicate The IPredicate to apply before calculating statistics.
+     * @return A LogStats object containing statistics for the filtered entries.
+     */
+    LogStatistics getFilteredStatistics(const LogPredicate& predicate) const;
+
+    /**
+     * @brief Retrieves the top N most frequent log messages (or message templates).
+     * @param n The number of top messages to retrieve.
+     * @param useTemplates If true, uses message templates; otherwise, uses raw messages.
+     * @return A vector of message/template to its frequency count, sorted by frequency (descending).
+     */
+    std::vector<std::pair<std::string, size_t>> getTopNMessages(size_t n, bool useTemplates = true) const;
+
+    /**
+     * @brief Retrieves the top N most frequent values for a given attribute.
+     * @param attributeName The name of the attribute to analyze.
+     * @param n The number of top attribute values to retrieve.
+     * @return A vector of LogValue to its frequency count, sorted by frequency (descending).
+     */
+    std::vector<std::pair<LogValue, size_t>> getTopNAttributeValues(const std::string& attributeName, size_t n) const;
+
+    /**
+     * @brief Retrieves the top N most frequent thread IDs.
+     * @param n The number of top thread IDs to retrieve.
+     * @return A vector of thread ID to its frequency count, sorted by frequency (descending).
+     */
+    std::vector<std::pair<std::string, size_t>> getTopNThreadIds(size_t n) const;
+
+    /**
+     * @brief Retrieves the top N most frequent source files.
+     * @param n The number of top source files to retrieve.
+     * @return A vector of source file path to its frequency count, sorted by frequency (descending).
+     */
+    std::vector<std::pair<std::string, size_t>> getTopNSourceFiles(size_t n) const;
     
     // Accessors
     std::vector<LogEntry> getEntriesSpan() const;
@@ -474,14 +671,22 @@ private:
     void applyAnonymizers(LogEntry& entry);
     std::string generateMessageTemplate(std::string_view message) const;
     std::vector<LogEntry> getFilteredEntriesInternal() const; // Helper to apply currentFilterOptions_
+    LogStatistics calculateStatistics(const std::vector<LogEntry>& entries) const; // NEW: Declare helper
 
     std::map<std::string, int> named_group_indices_;
-    mutable std::shared_mutex rw_mutex_; // Changed to shared_mutex
+    // Wrap shared_mutex and atomic in unique_ptr to make LogAnalyzer movable
+    mutable std::unique_ptr<std::shared_mutex> rw_mutex_ptr_; 
     mutable std::optional<LogStatistics> cached_stats_; // For caching statistics
     // NEW Iteration 8: Analysis Configuration
     std::optional<AnalysisConfig> currentAnalysisConfig_; // Stores current analysis configuration
     // NEW Iteration 8: Log Anonymization
     std::vector<std::unique_ptr<LogAnonymizer>> anonymizers_; // List of active anonymizers
+
+    // Tailing-related members
+    std::thread tailing_thread_;
+    std::unique_ptr<std::atomic<bool>> stop_tailing_ptr_ = std::make_unique<std::atomic<bool>>(false);
+    std::filesystem::path current_tail_path_;
+    std::chrono::milliseconds tail_interval_ = std::chrono::seconds(1);
 };
 
 } // namespace LogAnalysis
