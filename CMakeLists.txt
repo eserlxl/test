@@ -315,27 +315,34 @@ endif()
 
 # --- Core Library Component ---
 # Defines the reusable logic as a library
+set(GEMINI_CORE_SOURCES
+    src/analyzer/AnalysisConfig.cpp
+    src/analyzer/Exporters.cpp
+    src/analyzer/Filtering.cpp
+    src/analyzer/LogAnalyzer.cpp
+    src/analyzer/ParsingConfig.cpp
+    src/analyzer/ReportGenerator.cpp
+    src/analyzer/Statistics.cpp
+    src/config/CommandLineParser.cpp
+    src/config/ConfigManager.cpp
+    src/config/ConfigSerialization.cpp
+    src/model/LogEntry.cpp
+    src/model/LogEntryContext.cpp
+    src/model/LogEntryDeserializer.cpp
+    src/model/LogEntrySerializer.cpp
+    src/model/LogValue.cpp
+    src/util/LogTimeUtil.cpp # New LogTimeUtil source file
+)
+
 if (BUILD_SHARED_LIBS)
-    add_library(gemini-core SHARED
-        src/LogAnalyzer.cpp
-        src/LogEntry.cpp
-        src/ConfigManager.cpp # Add ConfigManager.cpp to the core library
-    )
+    add_library(gemini-core SHARED ${GEMINI_CORE_SOURCES})
 else()
-    add_library(gemini-core STATIC
-        src/analyzer/AnalysisConfig.cpp
-        src/analyzer/Exporters.cpp
-        src/analyzer/Filtering.cpp
-        src/analyzer/LogAnalyzer.cpp
-        src/analyzer/ParsingConfig.cpp
-        src/model/LogEntry.cpp
-        src/model/LogValue.cpp
-        src/config/ConfigManager.cpp
-    )
+    add_library(gemini-core STATIC ${GEMINI_CORE_SOURCES})
 endif()
 
 target_include_directories(gemini-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/util>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/gemini-cli>
 )
 
@@ -417,6 +424,52 @@ if (BUILD_TESTS)
         )
         gemini_cli_apply_global_options(LogValueTest)
         add_test(NAME LogValueTest COMMAND LogValueTest)
+
+        # ReportGenerator Tests
+        add_executable(ReportGeneratorTest tests/ReportGeneratorTest.cpp)
+        target_link_libraries(ReportGeneratorTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(ReportGeneratorTest)
+        add_test(NAME ReportGeneratorTest COMMAND ReportGeneratorTest)
+
+        # Statistics Tests
+        add_executable(StatisticsTest tests/StatisticsTest.cpp)
+        target_link_libraries(StatisticsTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(StatisticsTest)
+        add_test(NAME StatisticsTest COMMAND StatisticsTest)
+
+        # LogEntrySerialization Tests
+        add_executable(LogEntrySerializationTest tests/LogEntrySerializationTest.cpp)
+        target_link_libraries(LogEntrySerializationTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(LogEntrySerializationTest)
+        add_test(NAME LogEntrySerializationTest COMMAND LogEntrySerializationTest)
+
+        # Filtering Tests
+        add_executable(FilteringTest tests/FilteringTest.cpp)
+        target_link_libraries(FilteringTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(FilteringTest)
+        add_test(NAME FilteringTest COMMAND FilteringTest)
+
+        # ParsingConfig Tests
+        add_executable(ParsingConfigTest tests/ParsingConfigTest.cpp)
+        target_link_libraries(ParsingConfigTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(ParsingConfigTest)
+        add_test(NAME ParsingConfigTest COMMAND ParsingConfigTest)
+
     endif()
 endif()
 
