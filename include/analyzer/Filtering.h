@@ -83,19 +83,27 @@ namespace LogAnalysis {
         std::unique_ptr<LogPredicate> root_predicate; // Primary filtering logic
         std::string timezone_str; // Remains, as it affects time predicate interpretation.
 
+        // Added members based on build errors and common usage patterns for filters
+        bool case_sensitive_ = false;
+        bool invert_match_ = false;
+
         // Default constructor
         FilterOptions() = default;
 
         // Copy constructor
         FilterOptions(const FilterOptions& other) 
             : root_predicate(other.root_predicate ? other.root_predicate->clone() : nullptr),
-              timezone_str(other.timezone_str) {}
+              timezone_str(other.timezone_str),
+              case_sensitive_(other.case_sensitive_),
+              invert_match_(other.invert_match_) {}
 
         // Copy assignment operator
         FilterOptions& operator=(const FilterOptions& other) {
             if (this != &other) {
                 root_predicate = (other.root_predicate ? other.root_predicate->clone() : nullptr);
                 timezone_str = other.timezone_str;
+                case_sensitive_ = other.case_sensitive_;
+                invert_match_ = other.invert_match_;
             }
             return *this;
         }
