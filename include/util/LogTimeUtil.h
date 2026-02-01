@@ -19,19 +19,32 @@
 namespace LogTimeUtil {
 
     // Error enum for detailed parsing failures
-    enum class ParseError {
-        InvalidFormat,      // The string does not match the expected format.
-        OutOfRange,         // A component (e.g., day, month) is invalid.
-        UnsupportedTimezone // The timezone specifier is not supported or ambiguous.
+    enum class ParseErrorType {
+        InvalidFormat,          // The string does not match the expected format.
+        OutOfRange,             // A component (e.g., day, month) is invalid.
+        UnsupportedTimezone,    // The timezone specifier is not supported or ambiguous.
+        AmbiguousFormat,        // Multiple formats matched, but none uniquely identifiable.
+        TimezoneConversionError // Error during timezone conversion.
+    };
+
+    struct ParseErrorInfo {
+        ParseErrorType code;
+        std::string message;
+
+        // Helper for creating ParseResult with an error
+        static ParseErrorInfo fromCode(ParseErrorType c, const std::string& msg = "") {
+            return {c, msg};
+        }
     };
 
     // Type alias for parse results for readability
-    using ParseResult = std::expected<std::chrono::system_clock::time_point, ParseError>;
+    using ParseResult = std::expected<std::chrono::system_clock::time_point, ParseErrorInfo>;
 
     // New options struct for parsing functions
     struct ParseOptions {
         bool strict = true; // Default to strict parsing
-        // Future extensions: timezone hint, locale, etc.
+        std::optional<std::string> defaultTimezoneName; // Hint for parsing ambiguous timestamps (e.g., "PST")
+        std::optional<std::string> localeName;          // Hint for locale-specific parsing (e.g., month names)
     };
 
     struct FormatOptions {
@@ -108,14 +121,11 @@ namespace LogTimeUtil {
         const ParseOptions& opts = {}
     );
 
-    // --- DEPRECATED: Ambiguous "magic" parser ---
-    /**
-     * @brief Attempts to parse a timestamp by trying a series of common formats.
-     * @deprecated Scheduled for removal. Use an overload that explicitly specifies the
-     *             expected format for deterministic behavior.
-     */
-    [[deprecated("Use an overload that specifies the format explicitly.")]]
-    ParseResult parseTimestamp(std::string_view timestamp_str);
+    // --- NEW: Auto-detection parsing function, replaces the deprecated one ---
+    ParseResult parseTimestamp(
+        std::string_view timestamp_str,
+        const ParseOptions& opts = {}
+    );
 
     // --- DEPRECATED: generateLogEntryTimestampString will be removed in a future iteration ---
     [[deprecated("Use formatTimestamp with FormatOptions(logFormattingOptions) instead.")]]
@@ -130,6 +140,50 @@ namespace LogTimeUtil {
         std::chrono::system_clock::time_point tp,
         const LogFormattingOptions& options
     );
+
+    // --- NEW: Timezone and local time conversions ---
+    /**
+     * @brief Converts a system_clock::time_point to a zoned_time in the specified IANA timezone.
+     * @param tp The system_clock::time_point to convert (assumed UTC).
+     * @param timezoneName The IANA timezone name (e.g., "America/New_York").
+     * @return A std::chrono::zoned_time representing the time in the target timezone.
+     * @throws std::runtime_error if the timezoneName is invalid or not found.
+     */
+    std::chrono::zoned_time<std::chrono::system_clock::duration> toZonedTime(
+        std::chrono::system_clock::time_point tp,
+        const std::string& timezoneName
+    );
+
+    /**
+     * @brief Converts a system_clock::time_point (UTC) to a local_time using the system's current timezone.
+     * @param tp The system_clock::time_point to convert.
+     * @return A std::chrono::local_time representing the time in the local timezone.
+     */
+    std::chrono::local_time<std::chrono::system_clock::duration> toLocal(
+        std::chrono::system_clock::time_point tp
+    );
+
+    /**
+     * @brief Converts a local_time in a specified timezone to a system_clock::time_point (UTC).
+     * @param lt The std::chrono::local_time to convert.
+     * @param timezoneName The IANA timezone name of the local_time.
+     * @return A std::chrono::system_clock::time_point in UTC.
+     * @throws std::runtime_error if the timezoneName is invalid or not found.
+     */
+    std::chrono::system_clock::time_point toUtc(
+        std::chrono::local_time<std::chrono::system_clock::duration> lt,
+        const std::string& timezoneName
+    );
+
+    // --- NEW: Custom format string validation ---
+    /**
+     * @brief Validates if a given format string is a valid chrono format string.
+     * This function attempts to parse a dummy time_point using the format string
+     * and catches any exceptions, indicating an invalid format.
+     * @param formatStr The format string to validate.
+     * @return True if the format string is valid, false otherwise.
+     */
+    bool isValidChronoFormatString(std::string_view formatStr);
 
     // Helper for debugging/logging chrono durations (kept for now, but formatDuration is preferred)
     std::string to_string(std::chrono::nanoseconds ns);
