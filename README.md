@@ -17,6 +17,7 @@ A powerful C++ project designed for structured log parsing, analysis, and proces
 The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive model for log data:
 
 *   **Structured Logging**: Supports key-value pairs for `attributes` using a flexible `LogValue` variant type (supporting bool, int64, uint64, double, string, binary data, duration, lists, and objects).
+    *   `std::chrono::duration` values are automatically formatted into human-readable strings (e.g., "1h 5m 10s") during serialization.
 *   **Rich Metadata**: Each log entry can store:
     *   Timestamp (`std::chrono::system_clock::time_point`)
     *   Log Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
