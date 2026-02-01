@@ -37,6 +37,7 @@ namespace LogAnalysis {
         virtual ~LogPredicate() = default;
         virtual bool test(const LogEntry& entry) const = 0;
         virtual std::unique_ptr<LogPredicate> clone() const = 0;
+        virtual std::string toString() const { return "LogPredicate"; }
     };
 
     namespace Filters {
