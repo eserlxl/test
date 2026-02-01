@@ -86,9 +86,15 @@ void testLogValueAllTypesHashing() {
 void testLogEntryCoreFieldHashing() {
     std::cout << "  Running testLogEntryCoreFieldHashing..." << std::endl;
     LogEntry e1 = LogEntry::create(LogLevel::INFO, "message");
-    LogEntry e2 = LogEntry::create(e1.time_point + std::chrono::nanoseconds(1), LogLevel::INFO, "message");
-    LogEntry e3 = LogEntry::create(e1.time_point, LogLevel::WARNING, "message");
-    LogEntry e4 = LogEntry::create(e1.time_point, LogLevel::INFO, "different message");
+    
+    LogEntry e2 = e1;
+    e2.time_point += std::chrono::nanoseconds(1);
+
+    LogEntry e3 = e1;
+    e3.level = LogLevel::WARNING;
+
+    LogEntry e4 = e1;
+    e4.message = "different message";
 
     std::hash<LogEntry> hasher;
     size_t h1 = hasher(e1);
