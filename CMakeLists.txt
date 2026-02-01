@@ -402,96 +402,16 @@ if (BUILD_TESTS)
             )
             message(STATUS "Custom target 'generateTestReports' added for CTest XML reports.")
         endif()
-        # LogAnalyzer Tests
-        add_executable(LogAnalyzerTest tests/analyzer/LogAnalyzerTest.cpp)
-        target_link_libraries(LogAnalyzerTest PRIVATE
+
+        file(GLOB_RECURSE TEST_SOURCES "tests/*.cpp")
+
+        add_executable(runTests ${TEST_SOURCES})
+        target_link_libraries(runTests PRIVATE
             GTest::gtest_main
             gemini-core
         )
-        gemini_cli_apply_global_options(LogAnalyzerTest)
-        add_test(NAME LogAnalyzerTest COMMAND LogAnalyzerTest)
-
-        # LogEntry Tests
-        add_executable(LogEntryTest tests/model/LogEntryTest.cpp)
-        target_link_libraries(LogEntryTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(LogEntryTest)
-        add_test(NAME LogEntryTest COMMAND LogEntryTest)
-
-        # LogValue Tests
-        add_executable(LogValueTest tests/model/LogValueTest.cpp)
-        target_link_libraries(LogValueTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(LogValueTest)
-        add_test(NAME LogValueTest COMMAND LogValueTest)
-
-        # ReportGenerator Tests
-        add_executable(ReportGeneratorTest tests/analyzer/ReportGeneratorTest.cpp)
-        target_link_libraries(ReportGeneratorTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(ReportGeneratorTest)
-        add_test(NAME ReportGeneratorTest COMMAND ReportGeneratorTest)
-
-        # Statistics Tests
-        add_executable(StatisticsTest tests/analyzer/StatisticsTest.cpp)
-        target_link_libraries(StatisticsTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(StatisticsTest)
-        add_test(NAME StatisticsTest COMMAND StatisticsTest)
-
-        # LogEntrySerialization Tests
-        add_executable(LogEntrySerializationTest tests/model/LogEntrySerializationTest.cpp)
-        target_link_libraries(LogEntrySerializationTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(LogEntrySerializationTest)
-        add_test(NAME LogEntrySerializationTest COMMAND LogEntrySerializationTest)
-
-        # Filtering Tests
-        add_executable(FilteringTest tests/analyzer/FilteringTest.cpp)
-        target_link_libraries(FilteringTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(FilteringTest)
-        add_test(NAME FilteringTest COMMAND FilteringTest)
-
-        # ParsingConfig Tests
-        add_executable(ParsingConfigTest tests/analyzer/ParsingConfigTest.cpp)
-        target_link_libraries(ParsingConfigTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(ParsingConfigTest)
-        add_test(NAME ParsingConfigTest COMMAND ParsingConfigTest)
-
-        # LogTimeUtil Tests
-        add_executable(LogTimeUtilTest tests/util/LogTimeUtilTest.cpp)
-        target_link_libraries(LogTimeUtilTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(LogTimeUtilTest)
-        add_test(NAME LogTimeUtilTest COMMAND LogTimeUtilTest)
-
-        # LogEntryHash Tests (new)
-        add_executable(LogEntryHashTest tests/model/LogEntryHashTest.cpp)
-        target_link_libraries(LogEntryHashTest PRIVATE
-            GTest::gtest_main
-            gemini-core
-        )
-        gemini_cli_apply_global_options(LogEntryHashTest)
-        add_test(NAME LogEntryHashTest COMMAND LogEntryHashTest)
-
+        gemini_cli_apply_global_options(runTests)
+        add_test(NAME runTests COMMAND runTests)
     endif()
 endif()
 
