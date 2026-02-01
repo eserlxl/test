@@ -473,6 +473,15 @@ if (BUILD_TESTS)
         gemini_cli_apply_global_options(ParsingConfigTest)
         add_test(NAME ParsingConfigTest COMMAND ParsingConfigTest)
 
+        # LogTimeUtil Tests
+        add_executable(LogTimeUtilTest tests/LogTimeUtilTest.cpp)
+        target_link_libraries(LogTimeUtilTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(LogTimeUtilTest)
+        add_test(NAME LogTimeUtilTest COMMAND LogTimeUtilTest)
+
     endif()
 endif()
 

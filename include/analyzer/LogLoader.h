@@ -7,6 +7,10 @@
 #include <generator>
 #include <string>
 #include <vector>
+#include <thread>   // For std::thread
+#include <atomic>   // For std::atomic<bool>
+#include <chrono>   // For std::chrono::milliseconds
+#include <memory>   // For std::unique_ptr
 
 namespace LogAnalysis {
 
@@ -34,6 +38,10 @@ public:
 
 private:
     LogAnalyzer& analyzer_;
+    std::thread tailing_thread_;
+    std::unique_ptr<std::atomic<bool>> stop_tailing_ptr_ = std::make_unique<std::atomic<bool>>(false);
+    std::filesystem::path current_tail_path_;
+    std::chrono::milliseconds tail_interval_ = std::chrono::seconds(1);
 };
 
 } // namespace LogAnalysis

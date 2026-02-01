@@ -5,6 +5,16 @@
 #include <iostream>
 #include <algorithm>
 #include <regex>
+#include <expected>
+#include <future>
+#include <generator>
+#include <functional>
+#include <filesystem>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <iterator>
+#include <vector>
 
 namespace LogAnalysis {
 
@@ -40,7 +50,7 @@ std::expected<std::pair<LoadResult, std::vector<::LogEntry>>, std::string> LogLo
             if (current_entry_buffer.empty())
                 return;
             ::LogEntry entry = analyzer_.parseLogLine(current_entry_buffer, entry_line_start);
-            if (analyzer_.config_.strict_mode && entry.timestamp.empty() && entry.message.empty())
+            if (analyzer_.getParsingConfig().strict_mode && entry.timestamp.empty() && entry.message.empty())
             {
                 result.error_count++;
             }
@@ -86,8 +96,8 @@ std::expected<std::pair<LoadResult, std::vector<::LogEntry>>, std::string> LogLo
             { // Not a new entry
                 // Apply max_continuation_lines limit
                 if (current_entry_buffer.empty() ||
-                    (analyzer_.config_.max_continuation_lines > 0 &&
-                     static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= analyzer_.config_.max_continuation_lines))
+                    (analyzer_.getParsingConfig().max_continuation_lines > 0 &&
+                     static_cast<size_t>(std::count(current_entry_buffer.begin(), current_entry_buffer.end(), '\n')) >= analyzer_.getParsingConfig().max_continuation_lines))
                 {
                     // If buffer is empty or limit reached, treat current line as start of a new entry
                     process_buffer(); // Process the accumulated buffer as a full entry
@@ -100,12 +110,12 @@ std::expected<std::pair<LoadResult, std::vector<::LogEntry>>, std::string> LogLo
                 }
             }
 
-            if (analyzer_.config_.max_errors > 0 && result.error_count >= analyzer_.config_.max_errors)
+            if (analyzer_.getParsingConfig().max_errors > 0 && result.error_count >= analyzer_.getParsingConfig().max_errors)
             {
                 break;
             }
         }
-        if (analyzer_.config_.max_errors == 0 || result.error_count < analyzer_.config_.max_errors)
+        if (analyzer_.getParsingConfig().max_errors == 0 || result.error_count < analyzer_.getParsingConfig().max_errors)
         {
             process_buffer();
         }
@@ -556,7 +566,7 @@ void LogLoader::tailFileStream(
     }
 
     // Continuous tailing (follow mode)
-    while (!analyzer_.stop_tailing_ptr_->load()) { // Loop until stop_tailing_ptr_ is set to true
+    while (!stop_tailing_ptr_->load()) { // Loop until stop_tailing_ptr_ is set to true
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Polling interval
 
         file.clear(); // Clear any error flags
@@ -576,10 +586,10 @@ void LogLoader::tailFileStream(
             std::this_thread::sleep_for(std::chrono::seconds(1)); // Longer pause
             file.close(); // Close stream as file is gone
             // Wait for file to reappear, then re-open
-            while (!analyzer_.stop_tailing_ptr_->load() && !std::filesystem::exists(filepath)) {
+            while (!stop_tailing_ptr_->load() && !std::filesystem::exists(filepath)) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             }
-            if (analyzer_.stop_tailing_ptr_->load()) break; // Stop if requested while waiting
+            if (stop_tailing_ptr_->load()) break; // Stop if requested while waiting
             if (!open_file()) { // Re-open if file reappeared
                 std::this_thread::sleep_for(std::chrono::seconds(1)); // Pause before retry
                 continue;
@@ -633,7 +643,7 @@ void LogLoader::tailFileStream(
             std::vector<LogEntry> entries_to_export;
 
             while (std::getline(file, current_line)) {
-                if (analyzer_.stop_tailing_ptr_->load()) break; // Check stop signal inside inner loop
+                if (stop_tailing_ptr_->load()) break; // Check stop signal inside inner loop
 
                 // Apply tail-grep-regex
                 if (tail_grep_re && !std::regex_search(current_line, *tail_grep_re)) {
@@ -657,7 +667,7 @@ void LogLoader::tailFileStream(
                     entry_buffer += current_line;
                 }
             }
-            if (analyzer_.stop_tailing_ptr_->load()) break; // Check stop signal after inner loop
+            if (stop_tailing_ptr_->load()) break; // Check stop signal after inner loop
 
             // Export any accumulated entries
             if (!entries_to_export.empty()) {
@@ -682,23 +692,23 @@ void LogLoader::tailFileStream(
 
 std::future<void> LogLoader::startTailing(const std::filesystem::path& path, std::chrono::milliseconds interval) {
     // If a tailing thread is already running, stop it first
-    if (analyzer_.tailing_thread_.joinable()) {
+    if (tailing_thread_.joinable()) {
         stopTailing();
     }
 
-    analyzer_.current_tail_path_ = path;
-    analyzer_.tail_interval_ = interval;
-    *analyzer_.stop_tailing_ptr_ = false;
+    current_tail_path_ = path;
+    tail_interval_ = interval;
+    *stop_tailing_ptr_ = false;
 
     // Use a promise to return a future that completes when tailing stops
     auto promise = std::make_shared<std::promise<void>>();
     std::future<void> future = promise->get_future();
 
-    analyzer_.tailing_thread_ = std::thread([this, promise]() {
-        std::ifstream file(analyzer_.current_tail_path_);
+    tailing_thread_ = std::thread([this, promise]() {
+        std::ifstream file(current_tail_path_);
         if (!file.is_open()) {
             // Signal an error or complete the promise exceptionally
-            promise->set_exception(std::make_exception_ptr(std::runtime_error("Could not open file for tailing: " + analyzer_.current_tail_path_.string())));
+            promise->set_exception(std::make_exception_ptr(std::runtime_error("Could not open file for tailing: " + current_tail_path_.string())));
             return;
         }
 
@@ -707,15 +717,15 @@ std::future<void> LogLoader::startTailing(const std::filesystem::path& path, std
         std::string entry_buffer;
         size_t line_count = 0; // Approximate line count for error reporting
 
-        while (!*analyzer_.stop_tailing_ptr_) {
-            std::this_thread::sleep_for(analyzer_.tail_interval_);
+        while (!*stop_tailing_ptr_) {
+            std::this_thread::sleep_for(tail_interval_);
 
-            if (!std::filesystem::exists(analyzer_.current_tail_path_)) {
+            if (!std::filesystem::exists(current_tail_path_)) {
                 // File might have been deleted or moved. Try to re-open.
-                std::cerr << "Tailing: File not found: " << analyzer_.current_tail_path_ << ". Retrying..." << std::endl;
+                std::cerr << "Tailing: File not found: " << current_tail_path_ << ". Retrying..." << std::endl;
                 file.close();
                 std::this_thread::sleep_for(std::chrono::seconds(5)); // Wait a bit before trying to re-open
-                file.open(analyzer_.current_tail_path_);
+                file.open(current_tail_path_);
                 if (!file.is_open()) {
                     continue; // Keep trying
                 }
@@ -725,7 +735,7 @@ std::future<void> LogLoader::startTailing(const std::filesystem::path& path, std
             }
 
             file.clear(); // Clear any error flags
-            auto current_size = std::filesystem::file_size(analyzer_.current_tail_path_);
+            auto current_size = std::filesystem::file_size(current_tail_path_);
 
             if (current_size < static_cast<size_t>(last_pos)) {
                 // File was truncated or reset (e.g., log rotation)
@@ -771,9 +781,9 @@ std::future<void> LogLoader::startTailing(const std::filesystem::path& path, std
 }
 
 void LogLoader::stopTailing() {
-    *analyzer_.stop_tailing_ptr_ = true;
-    if (analyzer_.tailing_thread_.joinable()) {
-        analyzer_.tailing_thread_.join();
+    *stop_tailing_ptr_ = true;
+    if (tailing_thread_.joinable()) {
+        tailing_thread_.join();
     }
 }
 

@@ -195,7 +195,7 @@ namespace LogTimeUtil {
                 }
             } catch (...) {}
         }
-        return parseTimestamp(timestamp_str); // Fallback
+        return std::nullopt; // Explicitly return nullopt on failure, no fallback
     }
 
     std::optional<std::chrono::system_clock::time_point> parseTimestamp(
