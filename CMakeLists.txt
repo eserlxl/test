@@ -1,43 +1,40 @@
 cmake_minimum_required(VERSION 3.15...3.27)
-project(gemini-cli
+project(logAnalyzer
     VERSION 1.0.0
     DESCRIPTION "A command-line tool for analyzing log files"
     LANGUAGES CXX)
 
-set(GEMINI_CLI_CXX_STANDARD 23 CACHE STRING "C++ standard to use for building (e.g., 20, 23, 26)")
-set(CMAKE_CXX_STANDARD ${GEMINI_CLI_CXX_STANDARD})
+set(LOGANALYZER_CXX_STANDARD 23 CACHE STRING "C++ standard to use for building (e.g., 20, 23, 26)")
+set(CMAKE_CXX_STANDARD ${LOGANALYZER_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Enable experimental C++ Module CMake API if modules are enabled
-if (GEMINI_CLI_ENABLE_MODULES)
+if (LOGANALYZER_ENABLE_MODULES)
     set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API TRUE)
     message(STATUS "C++ Modules support enabled via CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API.")
 endif()
 
-# Vcpkg Integration
-if (GEMINI_CLI_USE_VCPKG)
+if (LOGANALYZER_USE_VCPKG)
     message(STATUS "Vcpkg integration enabled.")
     # CMAKE_TOOLCHAIN_FILE must be set when CMake is invoked.
     # We can check if it's already set and if it points to vcpkg.
     if (NOT CMAKE_TOOLCHAIN_FILE)
-        message(WARNING "GEMINI_CLI_USE_VCPKG is ON, but CMAKE_TOOLCHAIN_FILE is not set. "
+        message(WARNING "LOGANALYZER_USE_VCPKG is ON, but CMAKE_TOOLCHAIN_FILE is not set. "
                         "Please configure CMake with -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake")
     else()
         if (CMAKE_TOOLCHAIN_FILE MATCHES ".*vcpkg.cmake")
             message(STATUS "Vcpkg toolchain file found: ${CMAKE_TOOLCHAIN_FILE}")
-            if (NOT "${GEMINI_CLI_VCPKG_TRIPLET}" STREQUAL "")
+            if (NOT "${LOGANALYZER_VCPKG_TRIPLET}" STREQUAL "")
                 set(VCPKG_TARGET_TRIPLET "${GEMINI_CLI_VCPKG_TRIPLET}")
                 message(STATUS "Vcpkg target triplet set to: ${VCPKG_TARGET_TRIPLET}")
             endif()
         else()
-            message(WARNING "GEMINI_CLI_USE_VCPKG is ON, but CMAKE_TOOLCHAIN_FILE points to a non-vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+            message(WARNING "LOGANALYZER_USE_VCPKG is ON, but CMAKE_TOOLCHAIN_FILE points to a non-vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
         endif()
     endif()
 endif()
 
-# Clang-Format Integration
-if (GEMINI_CLI_ENABLE_CLANG_FORMAT)
+if (LOGANALYZER_ENABLE_CLANG_FORMAT)
     find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format clang-format-15 clang-format-14 clang-format-13) # Add more versions as needed
     if (CLANG_FORMAT_EXECUTABLE)
         message(STATUS "clang-format found: ${CLANG_FORMAT_EXECUTABLE}")
@@ -50,28 +47,26 @@ if (GEMINI_CLI_ENABLE_CLANG_FORMAT)
         )
         message(STATUS "Custom target 'clangFormat' added to apply clang-format.")
     else()
-        message(WARNING "clang-format not found. Please install it or disable GEMINI_CLI_ENABLE_CLANG_FORMAT.")
+        message(WARNING "clang-format not found. Please install it or disable LOGANALYZER_ENABLE_CLANG_FORMAT.")
     endif()
 endif()
 
-# Clang-Tidy Integration
-if (GEMINI_CLI_ENABLE_CLANG_TIDY)
+if (LOGANALYZER_ENABLE_CLANG_TIDY)
     find_program(CLANG_TIDY_EXECUTABLE NAMES clang-tidy clang-tidy-15 clang-tidy-14 clang-tidy-13) # Add more versions as needed
     if (CLANG_TIDY_EXECUTABLE)
         message(STATUS "clang-tidy found: ${CLANG_TIDY_EXECUTABLE}")
         set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_EXECUTABLE} -p=${CMAKE_BINARY_DIR})
         message(STATUS "clang-tidy enabled via CMAKE_CXX_CLANG_TIDY.")
     else()
-        message(WARNING "clang-tidy not found. Please install it or disable GEMINI_CLI_ENABLE_CLANG_TIDY.")
+        message(WARNING "clang-tidy not found. Please install it or disable LOGANALYZER_ENABLE_CLANG_TIDY.")
     endif()
 endif()
 
-# Conan Integration
-if (GEMINI_CLI_USE_CONAN)
+if (LOGANALYZER_USE_CONAN)
     message(STATUS "Conan integration enabled.")
     find_program(CONAN_EXECUTABLE NAMES conan)
     if (NOT CONAN_EXECUTABLE)
-        message(FATAL_ERROR "Conan executable not found. Please install Conan or disable GEMINI_CLI_USE_CONAN.")
+        message(FATAL_ERROR "Conan executable not found. Please install Conan or disable LOGANALYZER_USE_CONAN.")
     endif()
 
     # Try to find conan.cmake from Conan installation
