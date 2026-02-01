@@ -23,290 +23,6 @@
 // Ensure yaml-cpp headers are included correctly if not implicitly done
 // Typically, <yaml-cpp/yaml.h> is needed, but assuming it's handled by the .h file.
 
-namespace LogAnalysis {
-
-std::expected<LogAnalysisConfig, std::string> parseYamlConfig(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected<std::string>("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysisConfig>();
-    } catch (const YAML::Exception& e) {
-        // YAML::Exception covers BadFile, ParserException, InvalidNode etc.
-        return std::unexpected<std::string>(std::string("YAML parsing error: ") + e.what());
-    } catch (const std::exception& e) {
-        // For any other unexpected standard exceptions
-        return std::unexpected<std::string>("An unexpected error occurred during YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlConfig(const LogAnalysisConfig& config) {
-    try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// New struct for validation errors
-struct ValidationError {
-    std::string message;
-    // Potentially add more details like field name, invalid value, etc. if needed.
-};
-
-// New function for configuration validation
-std::expected<LogAnalysisConfig, ValidationError> validateConfig(const LogAnalysisConfig& config) {
-    // Perform validation checks for semantic correctness.
-
-    // Example: Validate FilterOptions level range
-    if (config.filterOptions.level_range) {
-        if (config.filterOptions.level_range->first > config.filterOptions.level_range->second) {
-            return std::unexpected<ValidationError>({
-                "Invalid level range in FilterOptions: minimum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->first)) +
-                ") is greater than maximum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->second)) + ")."
-            });
-        }
-    }
-    
-    // Example: Validate that if outputPath is set, outputFormat is not STDOUT, or handle appropriately.
-    // Depending on exact requirements, this might be a warning or error.
-    // For now, assuming it's a potential warning and not an error that stops processing.
-    // if (!config.outputPath.empty() && config.outputFormat == OutputFormat::STDOUT) {
-    //     // Potentially log a warning here.
-    // }
-
-    // Add more validation rules here...
-    // E.g., check for conflicting retrieval options, logical inconsistencies in analysis config, etc.
-
-    // If all checks pass, return the validated configuration.
-    return config;
-}
-
-// Modular parsing and serialization functions
-
-// FilterOptions
-std::expected<LogAnalysis::FilterOptions, std::string> parseYamlFilterOptions(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysis::FilterOptions>();
-    } catch (const YAML::Exception& e) {
-        return std::unexpected("YAML parsing error for FilterOptions: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during FilterOptions YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlFilterOptions(const LogAnalysis::FilterOptions& options) {
-    try {
-        YAML::Node node = options; // Convert options to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML for FilterOptions: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during FilterOptions YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// AnalysisConfig
-std::expected<LogAnalysis::AnalysisConfig, std::string> parseYamlAnalysisConfig(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysis::AnalysisConfig>();
-    } catch (const YAML::Exception& e) {
-        return std::unexpected("YAML parsing error for AnalysisConfig: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlAnalysisConfig(const LogAnalysis::AnalysisConfig& config) {
-    try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML for AnalysisConfig: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// RetrievalOptions
-std::expected<LogAnalysis::RetrievalOptions, std::string> parseYamlRetrievalOptions(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysis::RetrievalOptions>();
-    } catch (const YAML::Exception& e) {
-        return std::unexpected("YAML parsing error for RetrievalOptions: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlRetrievalOptions(const LogAnalysis::RetrievalOptions& options) {
-    try {
-        YAML::Node node = options; // Convert options to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML for RetrievalOptions: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// TextOutputConfig
-std::expected<LogAnalysis::TextOutputConfig, std::string> parseYamlTextOutputConfig(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysis::TextOutputConfig>();
-    } catch (const YAML::Exception& e) {
-        return std::unexpected("YAML parsing error for TextOutputConfig: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlTextOutputConfig(const LogAnalysis::TextOutputConfig& config) {
-    try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML for TextOutputConfig: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// ParsingConfig
-std::expected<LogAnalysis::ParsingConfig, std::string> parseYamlParsingConfig(const std::string& content) {
-    try {
-        YAML::Node node = YAML::Load(content);
-        if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
-        }
-        return node.as<LogAnalysis::ParsingConfig>();
-    } catch (const YAML::Exception& e) {
-        return std::unexpected("YAML parsing error for ParsingConfig: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during ParsingConfig YAML parsing: " + std::string(e.what()));
-    }
-}
-
-std::expected<std::string, std::string> serializeYamlParsingConfig(const LogAnalysis::ParsingConfig& config) {
-    try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
-        YAML::Emitter emitter;
-        emitter << node;
-        if (emitter.good()) {
-            return emitter.c_str();
-        } else {
-            return std::unexpected("Failed to emit YAML for ParsingConfig: " + std::string(emitter.GetLastError()));
-        }
-    } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during ParsingConfig YAML serialization: " + std::string(e.what()));
-    }
-}
-
-// Merge configurations
-LogAnalysis::LogAnalysisConfig mergeConfigs(const LogAnalysisConfig& base, const LogAnalysisConfig& overlay) {
-    LogAnalysisConfig merged = base; // Start with base configuration
-
-    // Simple field overrides (overlay takes precedence)
-    if (!overlay.command.empty()) merged.command = overlay.command;
-    if (!overlay.outputPath.empty()) merged.outputPath = overlay.outputPath;
-    // Note: outputFormat is an enum, simple assignment is usually appropriate
-    // unless there are specific merge rules for it. Assuming overlay overrides.
-    if (overlay.outputFormat != static_cast<LogAnalysis::OutputFormat>(-1)) { // Check if overlay has a valid value
-        merged.outputFormat = overlay.outputFormat;
-    }
-    merged.prettyPrint = overlay.prettyPrint; // Overwrite
-    merged.noColor = overlay.noColor;       // Overwrite
-    merged.recursive = overlay.recursive;     // Overwrite
-
-    // Merging vectors (e.g., sources, levels, keywords)
-    // For sources, a common strategy is unique merge based on path or URL.
-    // Overlay sources might override existing ones with the same path or add new ones.
-    // For simplicity here, we'll add unique sources from overlay to base.
-    if (!overlay.sources.empty()) {
-        std::set<std::string> base_source_paths;
-        for(const auto& src : merged.sources) base_source_paths.insert(src.getPath());
-        for(const auto& src : overlay.sources) {
-            if(base_source_paths.find(src.getPath()) == base_source_paths.end()) {
-                merged.sources.push_back(src);
-                base_source_paths.insert(src.getPath());
-            }
-            // Else: Source with this path already exists in base, decide whether to update or ignore overlay.
-            // For now, ignoring overlay if path matches. A more complex merge could update.
-        }
-    }
-
-    // For complex objects like FilterOptions, AnalysisConfig, RetrievalOptions, TextOutputConfig,
-    // a full recursive merge could be implemented, or a simple overlay override.
-    // For now, let's assume overlay overrides the entire object if it's considered "set".
-    // The definition of "set" for these complex types needs consideration (e.g., checking if they are default constructed).
-    // A simple approach is to just assign if the overlay has specific settings.
-    // Assuming default-constructed FilterOptions means "not set" for merging purposes.
-    // A more robust check would be needed to determine if overlay fields are meaningful.
-    if (true) { // Assuming isEmpty() or similar check to see if FilterOptions was modified.
-        merged.filterOptions = overlay.filterOptions;
-    }
-    if (true) { // Assuming isEmpty() check
-        merged.analysisConfig = overlay.analysisConfig;
-    }
-    if (true) { // Assuming isEmpty() check
-        merged.retrievalOptions = overlay.retrievalOptions;
-    }
-    if (true) { // Assuming isEmpty() check
-        merged.textOutputConfig = overlay.textOutputConfig;
-    }
-    if (!overlay.parsingConfig.custom_regex_pattern.empty() || !overlay.parsingConfig.custom_timestamp_format.empty()) {
-         merged.parsingConfig = overlay.parsingConfig;
-    }
-
-    // Note: This merge logic is a basic example and may need refinement based on specific requirements
-    // for each field, especially for nested structures and lists/maps.
-
-    return merged;
-}
-
-
-} // namespace LogAnalysis
-
 namespace { // Anonymous namespace for internal helpers
     std::string to_iso_string(std::chrono::system_clock::time_point tp) {
         auto tt = std::chrono::system_clock::to_time_t(tp);
@@ -395,52 +111,12 @@ namespace { // Anonymous namespace for internal helpers
                  "abcdefghijklmnopqrstuvwxyz"
                  "0123456789+/";
 
-    static std::string base64_encode(const std::vector<uint8_t>& data) {
-        std::string ret;
-        int i = 0;
-        int j = 0;
-        std::vector<uint8_t> char_array_3(3);
-        std::vector<uint8_t> char_array_4(4);
-        size_t in_len = data.size();
-        const uint8_t* bytes_to_encode = data.data();
 
-        while (in_len--) {
-            char_array_3[i++] = *(bytes_to_encode++);
-            if (i == 3) {
-                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-                char_array_4[3] = char_array_3[2] & 0x3f;
-
-                for (i = 0; (i <4) ; i++)
-                    ret += base64_chars[char_array_4[i]];
-                i = 0;
-            }
-        }
-
-        if (i) {
-            for(j = i; j < 3; j++)
-                char_array_3[j] = '\0';
-
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-
-            for (j = 0; (j < i + 1) ; j++)
-                ret += base64_chars[char_array_4[j]];
-        }
-
-        while((ret.length() % 4) != 0)
-            ret += '=';
-        return ret;
-    }
 
     static std::vector<uint8_t> base64_decode(const std::string& encoded_string) {
         size_t in_len = encoded_string.size();
         if (in_len == 0) return {};
         size_t i = 0;
-        size_t j = 0;
         int in_ = 0;
         std::vector<uint8_t> char_array_4(4);
         std::vector<uint8_t> char_array_3(3);
@@ -473,7 +149,7 @@ namespace { // Anonymous namespace for internal helpers
         }
 
         if (in_ > 0) {
-            for (i = 0; i < in_; i++) {
+            for (size_t i = 0; i < static_cast<size_t>(in_); i++) {
                 size_t found_pos = base64_chars.find(char_array_4[i]);
                  if (found_pos == std::string::npos) return {}; // Invalid character
                 char_array_4[i] = static_cast<uint8_t>(found_pos);
@@ -482,7 +158,7 @@ namespace { // Anonymous namespace for internal helpers
             char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
             char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
 
-            for (i = 0; (i < in_ - 1); i++)
+            for (size_t i = 0; (i < static_cast<size_t>(in_) - 1); i++)
                 ret.push_back(char_array_3[i]);
         }
 
@@ -612,7 +288,7 @@ namespace YAML {
                     }
 
                     if (likely_base64) {
-                        if (auto decoded_bytes = base64_decode(s)) {
+                        if (auto decoded_bytes = base64_decode(s); !decoded_bytes.empty()) {
                             // The `LogValue` variant must contain `std::vector<uint8_t>`
                             // Assuming it does, we can assign directly.
                             lv = std::move(decoded_bytes);
@@ -952,3 +628,287 @@ namespace YAML {
         }
     };
 } // namespace YAML
+
+namespace LogAnalysis {
+
+std::expected<LogAnalysisConfig, std::string> parseYamlConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected<std::string>("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysisConfig>();
+    } catch (const YAML::Exception& e) {
+        // YAML::Exception covers BadFile, ParserException, InvalidNode etc.
+        return std::unexpected<std::string>(std::string("YAML parsing error: ") + e.what());
+    } catch (const std::exception& e) {
+        // For any other unexpected standard exceptions
+        return std::unexpected<std::string>("An unexpected error occurred during YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlConfig(const LogAnalysisConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// New struct for validation errors
+struct ValidationError {
+    std::string message;
+    // Potentially add more details like field name, invalid value, etc. if needed.
+};
+
+// New function for configuration validation
+std::expected<LogAnalysisConfig, ValidationError> validateConfig(const LogAnalysisConfig& config) {
+    // Perform validation checks for semantic correctness.
+
+    // Example: Validate FilterOptions level range
+    if (config.filterOptions.level_range) {
+        if (config.filterOptions.level_range->first > config.filterOptions.level_range->second) {
+            return std::unexpected<ValidationError>({
+                "Invalid level range in FilterOptions: minimum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->first)) +
+                ") is greater than maximum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->second)) + ")."
+            });
+        }
+    }
+    
+    // Example: Validate that if outputPath is set, outputFormat is not STDOUT, or handle appropriately.
+    // Depending on exact requirements, this might be a warning or error.
+    // For now, assuming it's a potential warning and not an error that stops processing.
+    // if (!config.outputPath.empty() && config.outputFormat == OutputFormat::STDOUT) {
+    //     // Potentially log a warning here.
+    // }
+
+    // Add more validation rules here...
+    // E.g., check for conflicting retrieval options, logical inconsistencies in analysis config, etc.
+
+    // If all checks pass, return the validated configuration.
+    return config;
+}
+
+// Modular parsing and serialization functions
+
+// FilterOptions
+std::expected<LogAnalysis::FilterOptions, std::string> parseYamlFilterOptions(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::FilterOptions>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for FilterOptions: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during FilterOptions YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlFilterOptions(const LogAnalysis::FilterOptions& options) {
+    try {
+        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for FilterOptions: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during FilterOptions YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// AnalysisConfig
+std::expected<LogAnalysis::AnalysisConfig, std::string> parseYamlAnalysisConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::AnalysisConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for AnalysisConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlAnalysisConfig(const LogAnalysis::AnalysisConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for AnalysisConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// RetrievalOptions
+std::expected<LogAnalysis::RetrievalOptions, std::string> parseYamlRetrievalOptions(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::RetrievalOptions>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for RetrievalOptions: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlRetrievalOptions(const LogAnalysis::RetrievalOptions& options) {
+    try {
+        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for RetrievalOptions: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// TextOutputConfig
+std::expected<LogAnalysis::TextOutputConfig, std::string> parseYamlTextOutputConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::TextOutputConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for TextOutputConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlTextOutputConfig(const LogAnalysis::TextOutputConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for TextOutputConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// ParsingConfig
+std::expected<LogAnalysis::ParsingConfig, std::string> parseYamlParsingConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::ParsingConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for ParsingConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during ParsingConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlParsingConfig(const LogAnalysis::ParsingConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for ParsingConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during ParsingConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// Merge configurations
+LogAnalysis::LogAnalysisConfig mergeConfigs(const LogAnalysisConfig& base, const LogAnalysisConfig& overlay) {
+    LogAnalysisConfig merged = base; // Start with base configuration
+
+    // Simple field overrides (overlay takes precedence)
+    if (!overlay.command.empty()) merged.command = overlay.command;
+    if (!overlay.outputPath.empty()) merged.outputPath = overlay.outputPath;
+    // Note: outputFormat is an enum, simple assignment is usually appropriate
+    // unless there are specific merge rules for it. Assuming overlay overrides.
+    if (overlay.outputFormat != static_cast<LogAnalysis::OutputFormat>(-1)) { // Check if overlay has a valid value
+        merged.outputFormat = overlay.outputFormat;
+    }
+    merged.prettyPrint = overlay.prettyPrint; // Overwrite
+    merged.noColor = overlay.noColor;       // Overwrite
+    merged.recursive = overlay.recursive;     // Overwrite
+
+    // Merging vectors (e.g., sources, levels, keywords)
+    // For sources, a common strategy is unique merge based on path or URL.
+    // Overlay sources might override existing ones with the same path or add new ones.
+    // For simplicity here, we'll add unique sources from overlay to base.
+    if (!overlay.sources.empty()) {
+        std::set<std::string> base_source_paths;
+        for(const auto& src : merged.sources) base_source_paths.insert(src.getPath());
+        for(const auto& src : overlay.sources) {
+            if(base_source_paths.find(src.getPath()) == base_source_paths.end()) {
+                merged.sources.push_back(src);
+                base_source_paths.insert(src.getPath());
+            }
+            // Else: Source with this path already exists in base, decide whether to update or ignore overlay.
+            // For now, ignoring overlay if path matches. A more complex merge could update.
+        }
+    }
+
+    // For complex objects like FilterOptions, AnalysisConfig, RetrievalOptions, TextOutputConfig,
+    // a full recursive merge could be implemented, or a simple overlay override.
+    // For now, let's assume overlay overrides the entire object if it's considered "set".
+    // The definition of "set" for these complex types needs consideration (e.g., checking if they are default constructed).
+    // A simple approach is to just assign if the overlay has specific settings.
+    // Assuming default-constructed FilterOptions means "not set" for merging purposes.
+    // A more robust check would be needed to determine if overlay fields are meaningful.
+    if (true) { // Assuming isEmpty() or similar check to see if FilterOptions was modified.
+        merged.filterOptions = overlay.filterOptions;
+    }
+    if (true) { // Assuming isEmpty() check
+        merged.analysisConfig = overlay.analysisConfig;
+    }
+    if (true) { // Assuming isEmpty() check
+        merged.retrievalOptions = overlay.retrievalOptions;
+    }
+    if (true) { // Assuming isEmpty() check
+        merged.textOutputConfig = overlay.textOutputConfig;
+    }
+    if (!overlay.parsingConfig.custom_regex_pattern.empty() || !overlay.parsingConfig.custom_timestamp_format.empty()) {
+         merged.parsingConfig = overlay.parsingConfig;
+    }
+
+    // Note: This merge logic is a basic example and may need refinement based on specific requirements
+    // for each field, especially for nested structures and lists/maps.
+
+    return merged;
+}
+
+
+} // namespace LogAnalysis
