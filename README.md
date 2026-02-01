@@ -28,6 +28,32 @@ The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive 
     *   Tracing Context (Trace ID, Span ID)
     *   Tags (a set of strings)
 *   **Fluent API**: Easily construct `LogEntry` objects using a builder pattern (e.g., `LogEntry::create(...).withAttribute(...).withTag(...)`).
+*   **Scoped and Thread-Local Context (`LogContext`)**: Automatically enrich log entries with contextual attributes and tags within a specific scope, ideal for environments like request handling or transaction processing. This thread-local, RAII-based context management simplifies adding consistent data to logs without passing it through function calls.
+    *   **RAII-based Scopes**: Use `LogContext::Scope` to push a context (attributes and tags) onto a thread-local stack. The context is automatically removed when the scope is exited.
+    *   **Hierarchical Attributes**: Inner scopes override attribute values from outer scopes.
+    *   **Cumulative Tags**: Tags from all active scopes are combined.
+    *   **Example**:
+        ```cpp
+        #include "model/LogEntry.h"
+        #include "model/LogEntryContext.h"
+
+        void handle_request(const std::string& request_id) {
+            // Create a context that will apply to all logs in this scope.
+            LogContext::Scope request_scope({{"request_id", request_id}}, {"api"});
+
+            // This log entry will automatically have {"request_id": "...", "source": "api"}
+            auto entry = LogEntry::create(LogLevel::INFO, "Processing request");
+            LogContext::apply(entry); 
+
+            // You can create nested scopes
+            {
+                LogContext::Scope db_scope({{"db.transaction", true}}, {"database"});
+                // This log will have attributes from both scopes.
+                auto db_entry = LogEntry::create(LogLevel::DEBUG, "Executing query");
+                LogContext::apply(db_entry);
+            }
+        }
+        ```
 *   **Dynamic Context Capture**: Methods to automatically capture system-level information like process ID, host name, system load averages, and memory usage.
 *   **JSON Serialization**: Convert `LogEntry` objects to JSON with extensive customization options:
     *   **Field-Level Control**:
