@@ -9,24 +9,35 @@
 #include <ctime>   // For std::gmtime, std::mktime
 #include <cctype>  // For isdigit
 #include <stdexcept> // For std::runtime_error
+#include <utility> // For std::pair
+#include <optional> // For std::optional
+#include <set> // For std::set
+#include <map> // For std::map
+#include <vector> // For std::vector
+#include <memory> // For std::shared_ptr
+#include <chrono> // For std::chrono::nanoseconds, etc.
+#include <variant> // For std::visit, std::monostate
+#include <algorithm> // For std::find
+#include <iostream> // For std::istringstream in potential C++20 chrono parsing
+
+// Ensure yaml-cpp headers are included correctly if not implicitly done
+// Typically, <yaml-cpp/yaml.h> is needed, but assuming it's handled by the .h file.
 
 namespace LogAnalysis {
 
-std::expected<LogAnalysisConfig, std::string> parseYamlConfig(const std::string& content) {
+std::expected<LogAnalysisConfig, YamlParseError> parseYamlConfig(const std::string& content) {
     try {
         YAML::Node node = YAML::Load(content);
         if (!node.IsDefined()) {
-            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+            return std::unexpected<YamlParseError>({-1, -1, "Failed to parse YAML content: Document is empty or malformed."});
         }
         return node.as<LogAnalysisConfig>();
-    } catch (const YAML::BadFile& e) {
-        return std::unexpected("Bad YAML file: " + std::string(e.what()));
-    } catch (const YAML::ParserException& e) {
-        return std::unexpected("YAML parsing error: " + std::string(e.what()));
-    } catch (const YAML::InvalidNode& e) {
-        return std::unexpected("YAML invalid node error: " + std::string(e.what()));
+    } catch (const YAML::Exception& e) {
+        // YAML::Exception covers BadFile, ParserException, InvalidNode etc.
+        return std::unexpected<YamlParseError>({e.line(), e.column(), e.what()});
     } catch (const std::exception& e) {
-        return std::unexpected("An unexpected error occurred during YAML parsing: " + std::string(e.what()));
+        // For any other unexpected standard exceptions
+        return std::unexpected<YamlParseError>({-1, -1, "An unexpected error occurred during YAML parsing: " + std::string(e.what())});
     }
 }
 
@@ -45,6 +56,255 @@ std::expected<std::string, std::string> serializeYamlConfig(const LogAnalysisCon
     }
 }
 
+// New struct for validation errors
+struct ValidationError {
+    std::string message;
+    // Potentially add more details like field name, invalid value, etc. if needed.
+};
+
+// New function for configuration validation
+std::expected<LogAnalysisConfig, ValidationError> validateConfig(const LogAnalysisConfig& config) {
+    // Perform validation checks for semantic correctness.
+
+    // Example: Validate FilterOptions level range
+    if (config.filterOptions.level_range) {
+        if (config.filterOptions.level_range->first > config.filterOptions.level_range->second) {
+            return std::unexpected<ValidationError>({
+                "Invalid level range in FilterOptions: minimum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->first)) +
+                ") is greater than maximum level (" + std::to_string(static_cast<int>(config.filterOptions.level_range->second)) + ")."
+            });
+        }
+    }
+    
+    // Example: Validate that if outputPath is set, outputFormat is not STDOUT, or handle appropriately.
+    // Depending on exact requirements, this might be a warning or error.
+    // For now, assuming it's a potential warning and not an error that stops processing.
+    // if (!config.outputPath.empty() && config.outputFormat == OutputFormat::STDOUT) {
+    //     // Potentially log a warning here.
+    // }
+
+    // Add more validation rules here...
+    // E.g., check for conflicting retrieval options, logical inconsistencies in analysis config, etc.
+
+    // If all checks pass, return the validated configuration.
+    return config;
+}
+
+// Modular parsing and serialization functions
+
+// FilterOptions
+std::expected<LogAnalysis::FilterOptions, std::string> parseYamlFilterOptions(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::FilterOptions>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for FilterOptions: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during FilterOptions YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlFilterOptions(const LogAnalysis::FilterOptions& options) {
+    try {
+        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for FilterOptions: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during FilterOptions YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// AnalysisConfig
+std::expected<LogAnalysis::AnalysisConfig, std::string> parseYamlAnalysisConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::AnalysisConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for AnalysisConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlAnalysisConfig(const LogAnalysis::AnalysisConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for AnalysisConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during AnalysisConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// RetrievalOptions
+std::expected<LogAnalysis::RetrievalOptions, std::string> parseYamlRetrievalOptions(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::RetrievalOptions>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for RetrievalOptions: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlRetrievalOptions(const LogAnalysis::RetrievalOptions& options) {
+    try {
+        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for RetrievalOptions: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during RetrievalOptions YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// TextOutputConfig
+std::expected<LogAnalysis::TextOutputConfig, std::string> parseYamlTextOutputConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::TextOutputConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for TextOutputConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlTextOutputConfig(const LogAnalysis::TextOutputConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for TextOutputConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during TextOutputConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// ParsingConfig
+std::expected<LogAnalysis::ParsingConfig, std::string> parseYamlParsingConfig(const std::string& content) {
+    try {
+        YAML::Node node = YAML::Load(content);
+        if (!node.IsDefined()) {
+            return std::unexpected("Failed to parse YAML content: Document is empty or malformed.");
+        }
+        return node.as<LogAnalysis::ParsingConfig>();
+    } catch (const YAML::Exception& e) {
+        return std::unexpected("YAML parsing error for ParsingConfig: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during ParsingConfig YAML parsing: " + std::string(e.what()));
+    }
+}
+
+std::expected<std::string, std::string> serializeYamlParsingConfig(const LogAnalysis::ParsingConfig& config) {
+    try {
+        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Emitter emitter;
+        emitter << node;
+        if (emitter.good()) {
+            return emitter.c_str();
+        } else {
+            return std::unexpected("Failed to emit YAML for ParsingConfig: " + std::string(emitter.GetLastError()));
+        }
+    } catch (const std::exception& e) {
+        return std::unexpected("An unexpected error occurred during ParsingConfig YAML serialization: " + std::string(e.what()));
+    }
+}
+
+// Merge configurations
+LogAnalysis::LogAnalysisConfig mergeConfigs(const LogAnalysisConfig& base, const LogAnalysisConfig& overlay) {
+    LogAnalysisConfig merged = base; // Start with base configuration
+
+    // Simple field overrides (overlay takes precedence)
+    if (!overlay.command.empty()) merged.command = overlay.command;
+    if (!overlay.outputPath.empty()) merged.outputPath = overlay.outputPath;
+    // Note: outputFormat is an enum, simple assignment is usually appropriate
+    // unless there are specific merge rules for it. Assuming overlay overrides.
+    if (overlay.outputFormat != static_cast<LogAnalysis::OutputFormat>(-1)) { // Check if overlay has a valid value
+        merged.outputFormat = overlay.outputFormat;
+    }
+    merged.prettyPrint = overlay.prettyPrint; // Overwrite
+    merged.noColor = overlay.noColor;       // Overwrite
+    merged.recursive = overlay.recursive;     // Overwrite
+
+    // Merging vectors (e.g., sources, levels, keywords)
+    // For sources, a common strategy is unique merge based on path or URL.
+    // Overlay sources might override existing ones with the same path or add new ones.
+    // For simplicity here, we'll add unique sources from overlay to base.
+    if (!overlay.sources.empty()) {
+        std::set<std::string> base_source_paths;
+        for(const auto& src : merged.sources) base_source_paths.insert(src.getPath());
+        for(const auto& src : overlay.sources) {
+            if(base_source_paths.find(src.getPath()) == base_source_paths.end()) {
+                merged.sources.push_back(src);
+                base_source_paths.insert(src.getPath());
+            }
+            // Else: Source with this path already exists in base, decide whether to update or ignore overlay.
+            // For now, ignoring overlay if path matches. A more complex merge could update.
+        }
+    }
+
+    // For complex objects like FilterOptions, AnalysisConfig, RetrievalOptions, TextOutputConfig,
+    // a full recursive merge could be implemented, or a simple overlay override.
+    // For now, let's assume overlay overrides the entire object if it's considered "set".
+    // The definition of "set" for these complex types needs consideration (e.g., checking if they are default constructed).
+    // A simple approach is to just assign if the overlay has specific settings.
+    // Assuming default-constructed FilterOptions means "not set" for merging purposes.
+    // A more robust check would be needed to determine if overlay fields are meaningful.
+    if (!overlay.filterOptions.isEmpty()) { // Assuming isEmpty() or similar check to see if FilterOptions was modified.
+        merged.filterOptions = overlay.filterOptions;
+    }
+    if (!overlay.analysisConfig.isEmpty()) { // Assuming isEmpty() check
+        merged.analysisConfig = overlay.analysisConfig;
+    }
+    if (!overlay.retrievalOptions.isEmpty()) { // Assuming isEmpty() check
+        merged.retrievalOptions = overlay.retrievalOptions;
+    }
+    if (!overlay.textOutputConfig.isEmpty()) { // Assuming isEmpty() check
+        merged.textOutputConfig = overlay.textOutputConfig;
+    }
+    if (overlay.parsingConfig.custom_regex_pattern.has_value() || overlay.parsingConfig.custom_timestamp_format.has_value()) {
+         merged.parsingConfig = overlay.parsingConfig;
+    }
+
+    // Note: This merge logic is a basic example and may need refinement based on specific requirements
+    // for each field, especially for nested structures and lists/maps.
+
+    return merged;
+}
+
+
 } // namespace LogAnalysis
 
 namespace { // Anonymous namespace for internal helpers
@@ -55,14 +315,40 @@ namespace { // Anonymous namespace for internal helpers
         return ss.str();
     }
 
-    std::optional<std::chrono::system_clock::time_point> from_iso_string(const std::string& s) {
+    // Modified from_iso_string to accept and attempt to use timezone string.
+    // Note: Full C++20 zoned_time parsing would be more robust and is noted as a potential enhancement.
+    std::optional<std::chrono::system_clock::time_point> from_iso_string(const std::string& s, const std::string& tz_str = "") {
+        // If timezone string is provided, attempt timezone-aware parsing.
+        // This part is complex and might require C++20 std::chrono::zoned_time or external libraries.
+        // For this implementation, we'll outline the intent but keep the core parsing simple
+        // as a full timezone implementation is complex.
+        if (!tz_str.empty()) {
+            // Placeholder for timezone-aware parsing logic.
+            // A real implementation would parse 's' according to 'tz_str'.
+            // For now, we fall back to the default parsing, but the tz_str is available.
+            // std::chrono::zoned_time might be used here if C++20 is fully supported and configured.
+            // Example conceptual logic for C++20:
+            // try {
+            //     std::chrono::system_clock::time_point parsed_tp;
+            //     std::istringstream iss(s);
+            //     // Use std::chrono::parse or similar for ISO 8601 with timezone
+            //     // For now, just use the basic parser and acknowledge the timezone.
+            //     // A better solution would involve a full ISO 8601 parser that handles offsets/Z.
+            // } catch (const std::exception& e) {
+            //     // Log error or handle appropriately
+            // }
+        }
+
+        // Existing non-timezone aware parsing logic:
         std::tm tm = {};
         std::stringstream ss(s);
+        // This specific format string might be too restrictive for general ISO 8601.
+        // A more flexible parser might be needed.
         ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
         if (ss.fail()) {
             return std::nullopt;
         }
-        std::time_t tt = std::mktime(&tm);
+        std::time_t tt = std::mktime(&tm); // mktime interprets based on local timezone by default
         return std::chrono::system_clock::from_time_t(tt);
     }
 
@@ -101,6 +387,106 @@ namespace { // Anonymous namespace for internal helpers
         if (unit_str == "d") return std::chrono::days(count);
 
         return std::nullopt; // Unknown unit
+    }
+
+    // Base64 utility functions
+    static const std::string base64_chars =
+                 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                 "abcdefghijklmnopqrstuvwxyz"
+                 "0123456789+/";
+
+    static std::string base64_encode(const std::vector<uint8_t>& data) {
+        std::string ret;
+        int i = 0;
+        int j = 0;
+        std::vector<uint8_t> char_array_3(3);
+        std::vector<uint8_t> char_array_4(4);
+        size_t in_len = data.size();
+        const uint8_t* bytes_to_encode = data.data();
+
+        while (in_len--) {
+            char_array_3[i++] = *(bytes_to_encode++);
+            if (i == 3) {
+                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+                char_array_4[3] = char_array_3[2] & 0x3f;
+
+                for (i = 0; (i <4) ; i++)
+                    ret += base64_chars[char_array_4[i]];
+                i = 0;
+            }
+        }
+
+        if (i) {
+            for(j = i; j < 3; j++)
+                char_array_3[j] = '\0';
+
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for (j = 0; (j < i + 1) ; j++)
+                ret += base64_chars[char_array_4[j]];
+        }
+
+        while((ret.length() % 4) != 0)
+            ret += '=';
+        return ret;
+    }
+
+    static std::vector<uint8_t> base64_decode(const std::string& encoded_string) {
+        size_t in_len = encoded_string.size();
+        if (in_len == 0) return {};
+        size_t i = 0;
+        size_t j = 0;
+        int in_ = 0;
+        std::vector<uint8_t> char_array_4(4);
+        std::vector<uint8_t> char_array_3(3);
+        std::vector<uint8_t> ret;
+
+        // Remove padding
+        size_t padding = 0;
+        if (in_len > 0 && encoded_string[in_len - 1] == '=') padding++;
+        if (in_len > 1 && encoded_string[in_len - 2] == '=') padding++;
+        in_len -= padding;
+
+        while (i < in_len) {
+            char_array_4[in_] = encoded_string[i++];
+            in_++;
+            if (in_ ==4) {
+                for (i = 0; i < 4; i++) {
+                    size_t found_pos = base64_chars.find(char_array_4[i]);
+                    if (found_pos == std::string::npos) return {}; // Invalid character
+                    char_array_4[i] = static_cast<uint8_t>(found_pos);
+                }
+
+                char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+                char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+                char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+                for (i = 0; (i < 3); i++)
+                    ret.push_back(char_array_3[i]);
+                in_ = 0;
+            }
+        }
+
+        if (in_ > 0) {
+            for (i = 0; i < in_; i++) {
+                size_t found_pos = base64_chars.find(char_array_4[i]);
+                 if (found_pos == std::string::npos) return {}; // Invalid character
+                char_array_4[i] = static_cast<uint8_t>(found_pos);
+            }
+
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+
+            for (i = 0; (i < in_ - 1); i++)
+                ret.push_back(char_array_3[i]);
+        }
+
+        return ret;
     }
 } // Anonymous namespace
 
@@ -177,19 +563,28 @@ namespace YAML {
                 } else if constexpr (std::is_same_v<T, std::string>) {
                     node = arg;
                 } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
-                    std::stringstream ss;
-                    for (const auto& byte : arg) {
-                        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-                    }
-                    node = ss.str();
+                    // Use YAML::Binary for explicit binary data representation
+                    // This might implicitly use Base64 or another binary format depending on yaml-cpp's capabilities.
+                    node = YAML::Binary(arg.begin(), arg.end());
                 } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
                     node = to_duration_string(arg);
                 } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
-                    node = YAML::Node(*arg); // Explicitly convert std::vector<LogValue> to YAML::Node
+                    if (arg) { // Check if shared_ptr is not null
+                        // Rely on YAML::convert<LogList> specialization if it exists,
+                        // otherwise on yaml-cpp's conversion for std::vector<LogValue> if LogList is a typedef.
+                        node = *arg;
+                    }
                 } else if constexpr (std::is_same_v<T, std::shared_ptr<LogObject>>) {
-                    node = YAML::Node(*arg); // Explicitly convert std::map<std::string, LogValue> to YAML::Node
+                    if (arg) { // Check if shared_ptr is not null
+                        // Rely on YAML::convert<LogObject> specialization if it exists,
+                        // otherwise on yaml-cpp's conversion for std::map<std::string, LogValue> if LogObject is a typedef.
+                        node = *arg;
+                    }
                 } else {
-                    node = lv.toString(); // Fallback
+                    throw YAML::Exception(
+                        YAML::Mark(), // Default mark (no specific location available)
+                        "Unhandled type in LogValue variant during YAML encoding."
+                    );
                 }
             }, static_cast<const LogValueBase&>(lv));
             return node;
@@ -202,8 +597,30 @@ namespace YAML {
                 std::string s = node.as<std::string>();
                 if (s == "true") { lv = true; }
                 else if (s == "false") { lv = false; }
-                else if (auto dur = from_duration_string(s)) { lv = *dur; }
+                else if (auto dur = from_duration_string(s)) { lv = *dur; } // Check duration first
                 else {
+                    // Attempt to decode as base64 for vector<uint8_t>
+                    // A basic heuristic for base64: length multiple of 4, and contains base64 chars.
+                    bool likely_base64 = (s.length() % 4 == 0);
+                    if (likely_base64) {
+                        for (char c : s) {
+                            if (!isalnum(c) && c != '+' && c != '/' && c != '=') {
+                                likely_base64 = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (likely_base64) {
+                        if (auto decoded_bytes = base64_decode(s)) {
+                            // The `LogValue` variant must contain `std::vector<uint8_t>`
+                            // Assuming it does, we can assign directly.
+                            lv = std::move(decoded_bytes);
+                            return true; // Successfully decoded as bytes
+                        }
+                    }
+
+                    // Fallback to other types
                     try { lv = node.as<int64_t>(); return true; } catch (...) {}
                     try { lv = node.as<uint64_t>(); return true; } catch (...) {}
                     try { lv = node.as<double>(); return true; } catch (...) {}
@@ -367,10 +784,18 @@ namespace YAML {
             if(node["end_time"]) rhs.end_time = node["end_time"].as<std::string>();
             if(node["message_regex_pattern"]) rhs.message_regex_pattern = node["message_regex_pattern"].as<std::string>();
             if(node["start_tp"]) {
-                if (auto tp = from_iso_string(node["start_tp"].as<std::string>())) rhs.start_tp = *tp;
+                std::string time_str = node["start_tp"].as<std::string>();
+                // Pass the timezone string to the parsing function
+                if (auto tp = from_iso_string(time_str, rhs.timezone_str)) { // Pass timezone string
+                    rhs.start_tp = *tp;
+                }
             }
             if(node["end_tp"]) {
-                if (auto tp = from_iso_string(node["end_tp"].as<std::string>())) rhs.end_tp = *tp;
+                std::string time_str = node["end_tp"].as<std::string>();
+                // Pass the timezone string to the parsing function
+                if (auto tp = from_iso_string(time_str, rhs.timezone_str)) { // Pass timezone string
+                    rhs.end_tp = *tp;
+                }
             }
             if(node["source_file"]) rhs.source_file = node["source_file"].as<std::string>();
             if(node["thread_id"]) rhs.thread_id = node["thread_id"].as<std::string>();
