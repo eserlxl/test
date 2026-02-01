@@ -150,178 +150,36 @@ int main(int argc, char* argv[]) {
     }
 
     // --- Configuration Loading and Merging Logic ---
+    LogAnalysis::ConfigManager configManager;
     LogAnalysis::LogAnalysisConfig finalConfig;
 
-    // 1. Load from config file if specified
-    if (!opts.configFilePath.empty()) {
-        LogAnalysis::ConfigFormat configFormat;
-        if (!opts.configFormatStr.empty()) {
-            // Use format explicitly specified by --config-format
-            if (opts.configFormatStr == "yaml") {
-                configFormat = LogAnalysis::ConfigFormat::YAML;
-            } else if (opts.configFormatStr == "json") {
-                configFormat = LogAnalysis::ConfigFormat::JSON;
-            } else {
-                std::cerr << "Error: Invalid config format specified with --config-format: " << opts.configFormatStr << std::endl;
-                return 1;
-            }
-        } else {
-            // Infer format from file extension
-            std::filesystem::path configPath(opts.configFilePath);
-            if (configPath.has_extension()) {
-                std::string ext = configPath.extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".yaml" || ext == ".yml") {
-                    configFormat = LogAnalysis::ConfigFormat::YAML;
-                } else if (ext == ".json") {
-                    configFormat = LogAnalysis::ConfigFormat::JSON;
-                } else {
-                    std::cerr << "Error: Cannot infer config format from file extension: " << ext << ". Please use --config-format." << std::endl;
-                    return 1;
-                }
-            } else {
-                std::cerr << "Error: Config file has no extension and format not specified. Please use --config-format." << std::endl;
-                return 1;
-            }
+    // 1. Load a default config file if one exists
+    auto defaultConfigResult = configManager.loadDefaultConfig();
+    if (!defaultConfigResult) {
+        std::cerr << "Error loading default config: " << defaultConfigResult.error() << std::endl;
+        // This might not be a fatal error, so we just warn.
+    } else if (*defaultConfigResult) {
+        finalConfig = **defaultConfigResult;
+        if (opts.verbose.value_or(false)) {
+            std::cerr << "Loaded default configuration." << std::endl;
         }
+    }
 
-        auto configLoadResult = LogAnalysis::ConfigManager::loadConfigFile(opts.configFilePath, configFormat);
+    // 2. Load from config file specified on the command line (overrides default)
+    if (opts.configFilePath) {
+        auto configLoadResult = configManager.loadConfigFile(*opts.configFilePath);
         if (!configLoadResult) {
-            std::cerr << "Error loading config file: " << configLoadResult.error() << std::endl;
+            std::cerr << "Error loading config file '" << *opts.configFilePath << "': " << configLoadResult.error() << std::endl;
             return 1;
         }
         finalConfig = *configLoadResult;
-    }
-
-    // 2. Populate CommandLineOptions's structured fields from temporary fields
-    // This effectively converts CLI-parsed raw values into structured types before merging.
-    // This block is essentially what `mergeCliOptions` does, but for the `opts` itself to contain
-    // the "parsed CLI values" in structured form.
-
-    // Input Sources
-    for (const auto& path : opts.tempFilePaths) {
-        finalConfig.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::FILE);
-    }
-    for (const auto& path : opts.tempDirPaths) {
-        finalConfig.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::DIRECTORY);
-    }
-    for (const auto& url : opts.tempUrls) {
-        finalConfig.sources.emplace_back("", LogAnalysis::LogSource::SourceType::URL, url);
-    }
-    if (opts.tempStdin) {
-        finalConfig.sources.emplace_back("", LogAnalysis::LogSource::SourceType::STD_IN);
-    }
-    // Handle positional files (backward compatibility) only if no explicit sources were provided via -f, -d, --stdin, --url
-    if (finalConfig.sources.empty()) { // Check finalConfig.sources, not opts.sources which is still empty
-        for (const auto& path : opts.tempPositionalFiles) {
-            finalConfig.sources.emplace_back(path, LogAnalysis::LogSource::SourceType::FILE);
+        if (opts.verbose.value_or(false)) {
+            std::cerr << "Loaded configuration from " << *opts.configFilePath << std::endl;
         }
     }
-    finalConfig.recursive = opts.recursive; // Apply recursive flag for all sources
 
-    // Parsing Config
-    finalConfig.parsingConfig.custom_regex_pattern = opts.tempParserRegex;
-    finalConfig.parsingConfig.custom_timestamp_format = opts.tempParserTimestampFormat;
-
-    // Filter Options
-    if (!opts.tempLogLevelStr.empty()) {
-        finalConfig.filterOptions.level = LogEntry::parseLevel(opts.tempLogLevelStr);
-    }
-    finalConfig.filterOptions.keyword = opts.tempKeyword;
-    finalConfig.filterOptions.message_regex_pattern = opts.tempMessageRegexPattern;
-    finalConfig.filterOptions.start_time = opts.tempStartTime;
-    finalConfig.filterOptions.end_time = opts.tempEndTime;
-    finalConfig.filterOptions.include_keywords = opts.tempIncludeKeywords;
-    finalConfig.filterOptions.exclude_keywords = opts.tempExcludeKeywords;
-    finalConfig.filterOptions.include_regexes = opts.tempIncludeRegexes;
-    finalConfig.filterOptions.exclude_regexes = opts.tempExcludeRegexes;
-    // Parse tempLevelRange
-    if (!opts.tempLevelRange.empty()) {
-        size_t colon_pos = opts.tempLevelRange.find(':');
-        if (colon_pos != std::string::npos) {
-            std::string min_level_str = opts.tempLevelRange.substr(0, colon_pos);
-            std::string max_level_str = opts.tempLevelRange.substr(colon_pos + 1);
-            LogAnalysis::LogLevel min_level = LogEntry::parseLevel(min_level_str);
-            LogAnalysis::LogLevel max_level = LogEntry::parseLevel(max_level_str);
-            finalConfig.filterOptions.level_range = {min_level, max_level};
-        } else {
-            std::cerr << "Warning: Invalid --level-range format. Expected 'min:max'." << std::endl;
-        }
-    }
-    // Parse tempFieldFilters
-    for (const auto& ff_str : opts.tempFieldFilters) {
-        size_t first_colon = ff_str.find(':');
-        size_t second_colon = ff_str.find(':', first_colon + 1);
-        if (first_colon != std::string::npos && second_colon != std::string::npos) {
-            LogAnalysis::FieldFilter ff;
-            ff.fieldName = ff_str.substr(0, first_colon);
-            ff.op = ff_str.substr(first_colon + 1, second_colon - (first_colon + 1));
-            ff.value = ff_str.substr(second_colon + 1);
-            finalConfig.filterOptions.field_filters.push_back(ff);
-        } else {
-            std::cerr << "Warning: Invalid --field-filter format. Expected 'field:operator:value'." << std::endl;
-        }
-    }
-    if (opts.tempFilterLogic == "OR") { // CLI11 transform handles "AND" already as default.
-        finalConfig.filterOptions.combined_filter_logic = LogAnalysis::FilterLogic::OR;
-    }
-    finalConfig.filterOptions.timezone_str = opts.tempTimezoneStr;
-
-
-    // Analysis Config
-    finalConfig.analysisConfig.top_n_results = opts.tempTopNResults;
-    finalConfig.analysisConfig.group_by_fields = opts.tempGroupByFields;
-    if (opts.tempAnalysisOrder == "asc") { // CLI11 transform already sets sort_descending
-        finalConfig.analysisConfig.sort_descending = false;
-    } else {
-        finalConfig.analysisConfig.sort_descending = true;
-    }
-    finalConfig.analysisConfig.sort_by_field = opts.tempSortAnalysisBy;
-    // Parse tempAggregateFunctions
-    for (const auto& af_str : opts.tempAggregateFunctions) {
-        size_t colon_pos = af_str.find(':');
-        if (colon_pos != std::string::npos) {
-            LogAnalysis::AggregateFunction af;
-            af.fieldName = af_str.substr(0, colon_pos);
-            af.function = af_str.substr(colon_pos + 1);
-            finalConfig.analysisConfig.aggregate_functions.push_back(af);
-        } else {
-            std::cerr << "Warning: Invalid --aggregate-function format. Expected 'field:function'." << std::endl;
-        }
-    }
-    finalConfig.analysisConfig.time_window_duration = opts.tempTimeWindowDuration;
-
-    // Retrieval Options
-    finalConfig.retrievalOptions.limit = opts.tempLimit;
-    finalConfig.retrievalOptions.tail_count = opts.tempTailCount;
-    finalConfig.retrievalOptions.sort_by_field = opts.tempSortByField;
-    if (opts.tempOrder == "asc") { // CLI11 transform already sets sort_descending
-        finalConfig.retrievalOptions.sort_descending = false;
-    } else {
-        finalConfig.retrievalOptions.sort_descending = true;
-    }
-    finalConfig.retrievalOptions.follow = opts.tempFollow;
-    finalConfig.retrievalOptions.fields_to_export = opts.tempFieldsToExport;
-    finalConfig.retrievalOptions.follow_by_name = opts.tempFollowByName;
-    finalConfig.retrievalOptions.highlight_regex = opts.tempHighlightRegex;
-    finalConfig.retrievalOptions.tail_grep_regex = opts.tempTailGrepRegex;
-
-    // Text Output Config
-    finalConfig.textOutputConfig.fields_to_display = opts.tempTextFields;
-    finalConfig.textOutputConfig.custom_template = opts.tempTextTemplate;
-    finalConfig.textOutputConfig.table_style = opts.tempTableStyle;
-    
-    // Command
-    finalConfig.command = opts.command;
-
-    // 3. Merge CLI options into finalConfig (CLI options already parsed into finalConfig directly above
-    // based on the new CommandLineOptions structure). This step would typically be
-    // `LogAnalysis::ConfigManager::mergeCliOptions(finalConfig, opts);` if CLI options were
-    // parsed into a separate, temporary CommandLineOptions struct and then merged.
-    // Given the current structure where `finalConfig` is directly populated from `opts.temp*` fields,
-    // and `opts` also contains the `outputFormat`, `prettyPrint`, `noColor`, `verbose`, `outputPath`,
-    // `recursive`, `command`, `mergeCliOptions` is not strictly needed for this current `opts` structure
-    // as CLI always takes precedence.
+    // 3. Merge CLI options into the final configuration
+    configManager.mergeCliOptions(finalConfig, opts);
 
     // Input sources must be available for all commands.
     if (finalConfig.sources.empty()) {
@@ -332,12 +190,11 @@ int main(int argc, char* argv[]) {
     }
 
     LogAnalysis::LogAnalyzer analyzer;
+    // The analyzer should take the whole config object, or we set parts of it.
     analyzer.setParsingConfig(finalConfig.parsingConfig);
     analyzer.setFilterOptions(finalConfig.filterOptions);
     analyzer.setAnalysisConfig(finalConfig.analysisConfig);
     
-    // The loadLogSources method needs to be updated to accept the recursive flag
-    // This will be addressed in the next step when updating LogAnalyzer API
     auto loadResult = analyzer.loadLogSources(finalConfig.sources, finalConfig.recursive);
 
     if (!loadResult) {
@@ -368,12 +225,12 @@ int main(int argc, char* argv[]) {
             break;
         case LogAnalysis::OutputFormat::TEXT:
         default:
-             exporter = std::make_unique<LogAnalysis::ConsoleExporter>(out, !finalConfig.noColor); // Use opts.noColor
+             exporter = std::make_unique<LogAnalysis::ConsoleExporter>(out, !finalConfig.noColor);
             break;
     }
 
     if (finalConfig.command == "analyze") {
-        auto stats = analyzer.analyzeAndGetResults(); // This needs to use the updated config
+        auto stats = analyzer.analyzeAndGetResults();
         exporter->exportStats(stats);
 
     } else if (finalConfig.command == "entries") {
@@ -385,18 +242,11 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: 'tail' command requires a single file source." << std::endl;
             return 1;
         }
-
-        // Determine 'follow' behavior:
-        // If --lines is specified, follow is implicitly false (read N lines and exit).
-        // If --no-follow flag is present, follow is false.
-        // Otherwise, follow is true (default continuous tailing).
-        if (finalConfig.retrievalOptions.tail_count > 0) { // --lines N was used
-            finalConfig.retrievalOptions.follow = false;
-        } else if (finalConfig.retrievalOptions.follow == false) { // --no-follow was used
-            // finalConfig.retrievalOptions.follow is already set to false if --no-follow was present
-        } else { // Neither --lines nor --no-follow, so default to continuous follow
-            finalConfig.retrievalOptions.follow = true;
-        }
+        
+        // This logic is now part of mergeCliOptions.
+        // if (finalConfig.retrievalOptions.tail_count > 0) {
+        //     finalConfig.retrievalOptions.follow = false;
+        // }
 
         try {
             analyzer.tailFileStream(finalConfig.sources[0], finalConfig.filterOptions, finalConfig.retrievalOptions, *exporter);

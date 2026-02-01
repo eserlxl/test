@@ -930,26 +930,7 @@ std::unique_ptr<LogAnalysis::LogPredicate> LogAnalysis::FilterOptions::toPredica
     return root;
 }
 
-// --- LogSource Implementation ---
-LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type, const std::string& url)
-    : path_(path), type_(type), url_(url) {
-    if (type_ == SourceType::FILE || type_ == SourceType::DIRECTORY) {
-        resolved_file_paths_.push_back(path_); // Add the initial path for local files/dirs
-    }
-    // For URL and S3 types, the path_ might be empty, and url_ will hold the actual source.
-}
 
-std::vector<std::string> LogAnalysis::LogSource::getFilePaths() const {
-    return resolved_file_paths_; // Return the paths initialized or resolved via loadLogSources
-}
-
-void LogAnalysis::LogSource::resolveFilePaths() const {
-    // This method is now effectively deprecated or will be called by LogAnalyzer::loadLogSources
-    // which will pass the recursive flag. This particular implementation in LogSource is removed.
-    // The actual resolution based on recursion will happen in LogAnalyzer.
-    // For now, this becomes a no-op or a placeholder for future specific logic if needed.
-    // The responsibility shifts to LogAnalyzer.
-}
 // --- Exporters Implementation ---
 
 void LogAnalysis::JsonExporter::exportStats(const LogStatistics &stats)
@@ -2141,35 +2122,6 @@ void LogAnalysis::LogAnalyzer::tailFileStream(
             std::vector<LogEntry> final_entry_vec;
             final_entry_vec.push_back(std::move(entry));
             exporter.exportEntries({final_entry_vec.data(), final_entry_vec.size()}, retrieval.fields_to_export, retrieval.highlight_regex);
-        }
-    }
-}
-                    ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
-                    this->applyEnrichers(entry);
-                    this->applyAnonymizers(entry);
-                    if (predicate->test(entry)) {
-                        std::vector<LogEntry> single_entry_vec;
-                        single_entry_vec.push_back(std::move(entry));
-                        exporter.exportEntries({single_entry_vec.data(), single_entry_vec.size()}, retrieval.fields_to_export);
-                    }
-                    entry_buffer = current_line;
-                } else {
-                    if (!entry_buffer.empty()) entry_buffer += "\n";
-                    entry_buffer += current_line;
-                }
-            }
-            last_pos = file.tellg();
-        }
-    }
-    // Process any remaining buffer after tailing stops
-    if (!entry_buffer.empty()) {
-        ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
-        this->applyEnrichers(entry);
-        this->applyAnonymizers(entry);
-        if (predicate->test(entry)) {
-            std::vector<LogEntry> single_entry_vec;
-            single_entry_vec.push_back(std::move(entry));
-            exporter.exportEntries({single_entry_vec.data(), single_entry_vec.size()}, retrieval.fields_to_export);
         }
     }
 }

@@ -1308,7 +1308,7 @@ void LogEntry::setAttribute(const std::string &key, LogValue value)
 
 std::string LogEntry::getAttributeAsString(const std::string &key) const
 {
-    auto it = attributes.find(key);
+    auto it = attributes.find(std::string(key));
     if (it == attributes.end())
         return "";
 
@@ -1334,7 +1334,7 @@ bool LogEntry::hasAttribute(const std::string &key) const
 
 std::optional<LogValue> LogEntry::getAttribute(std::string_view key) const
 {
-    auto it = attributes.find(key);
+    auto it = attributes.find(std::string(key));
     if (it != attributes.end())
     {
         return it->second;
@@ -1348,7 +1348,7 @@ bool LogEntry::hasTag(std::string_view tag) const
 }
 
 std::optional<double> LogEntry::getAsDouble(const std::string& key) const {
-    auto it = attributes.find(key);
+    auto it = attributes.find(std::string(key));
     if (it == attributes.end()) return std::nullopt;
 
     return std::visit([](auto&& arg) -> std::optional<double> {
@@ -1367,7 +1367,7 @@ std::optional<double> LogEntry::getAsDouble(const std::string& key) const {
 }
 
 std::optional<int64_t> LogEntry::getAsInt(const std::string& key) const {
-    auto it = attributes.find(key);
+    auto it = attributes.find(std::string(key));
     if (it == attributes.end()) return std::nullopt;
 
     return std::visit([](auto&& arg) -> std::optional<int64_t> {
