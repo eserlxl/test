@@ -34,6 +34,7 @@ The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive 
         *   `include_fields` / `exclude_fields`: Whitelist or blacklist specific fields (e.g., `timestamp`, `level`, `attributes.hostname`) for fine-grained control over the output.
         *   `include_source`, `include_thread`, `include_tracing`: Toggle the inclusion of source code location, thread, and tracing context.
         *   `exclude_empty`: Exclude fields that have empty or null values.
+        *   `flatten_attributes`: If true, attributes are merged directly into the root JSON object instead of being nested under an "attributes" key.
     *   **Formatting and Indentation**:
         *   `pretty`: Enable pretty printing for the main log entry structure.
         *   `pretty_structured_data`: Enable pretty printing for nested JSON objects within attributes.
