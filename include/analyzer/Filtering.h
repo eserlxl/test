@@ -79,35 +79,42 @@ namespace LogAnalysis {
     };
 
     struct FilterOptions {
-        std::optional<LogLevel> level;
-        std::optional<std::string> keyword;
-        std::optional<std::string> start_time;
-        std::optional<std::string> end_time;
-        bool case_sensitive = true;
-        bool invert_match = false;
-        std::vector<LogLevel> levels;
-        std::optional<std::string> message_regex_pattern;
-        std::optional<std::chrono::system_clock::time_point> start_tp;
-        std::optional<std::chrono::system_clock::time_point> end_tp;
-        std::optional<std::string> source_file;
-        std::optional<std::string> thread_id;
-        std::map<std::string, LogValue> attribute_matches;
-        std::set<std::string> required_tags;
-        std::map<std::string, std::vector<AttributeFilterCondition>> attribute_filter_conditions;
-        std::set<std::string> excluded_tags;
-        std::vector<std::map<std::string, LogValue>> attribute_or_matches;
-        std::optional<std::chrono::system_clock::duration> since;
-        std::vector<std::string> any_keywords;
-        std::vector<std::string> include_keywords;
-        std::vector<std::string> exclude_keywords;
-        std::vector<std::string> include_regexes;
-        std::vector<std::string> exclude_regexes;
-        std::optional<std::pair<LogLevel, LogLevel>> level_range;
-        std::vector<FieldFilter> field_filters;
-        FilterLogic combined_filter_logic = FilterLogic::AND;
-        std::string timezone_str;
+        std::unique_ptr<LogPredicate> root_predicate; // Primary filtering logic
+        std::string timezone_str; // Remains, as it affects time predicate interpretation.
 
+        // --- Convenience Builder Methods ---
+        // These methods construct and compose predicates for the root_predicate.
+        // Full implementation will be in Filtering.cpp.
+
+        // Basic filters
+        FilterOptions& withLevel(LogLevel l);
+        FilterOptions& withMinLevel(LogLevel l); // for level_range min
+        FilterOptions& withKeyword(std::string k, bool case_sensitive = true);
+        FilterOptions& withAnyKeyword(const std::vector<std::string>& keywords, bool case_sensitive = true);
+        FilterOptions& withMessageRegex(std::string pattern);
+        FilterOptions& withSourceFile(std::string file);
+        FilterOptions& withThreadId(std::string tid);
+        FilterOptions& withRequiredTag(std::string tag);
+        FilterOptions& withExcludedTag(std::string tag);
+        FilterOptions& withAttribute(std::string key, AttributeFilterCondition condition, bool case_sensitive = true);
+        FilterOptions& withAttributeStringContains(std::string key, std::string substring, bool case_sensitive = true);
+        FilterOptions& withAttributeNumericGreaterThan(std::string key, double value);
+        FilterOptions& withAttributeNumericLessThan(std::string key, double value);
+        FilterOptions& withTimeRange(std::optional<std::chrono::system_clock::time_point> start, std::optional<std::chrono::system_clock::time_point> end);
+        FilterOptions& withSince(std::chrono::system_clock::duration d);
+
+        // Logical composition
+        FilterOptions& withLogicalAND(std::unique_ptr<LogPredicate> p);
+        FilterOptions& withLogicalOR(std::unique_ptr<LogPredicate> p);
+        FilterOptions& withNot(std::unique_ptr<LogPredicate> p);
+
+        // --- Core Methods ---
+        // Their implementation will change significantly to manage root_predicate.
+
+        // toPredicate() should return a clone of root_predicate.
         std::unique_ptr<LogPredicate> toPredicate() const;
+
+        // toJson and fromJson will be updated to serialize/deserialize the root_predicate.
         std::string toJson() const;
         static std::expected<FilterOptions, std::string> fromJson(std::string_view json_str);
     };
