@@ -323,9 +323,14 @@ if (BUILD_SHARED_LIBS)
     )
 else()
     add_library(gemini-core STATIC
-        src/LogAnalyzer.cpp
-        src/LogEntry.cpp
-        src/ConfigManager.cpp # Add ConfigManager.cpp to the core library
+        src/analyzer/AnalysisConfig.cpp
+        src/analyzer/Exporters.cpp
+        src/analyzer/Filtering.cpp
+        src/analyzer/LogAnalyzer.cpp
+        src/analyzer/ParsingConfig.cpp
+        src/model/LogEntry.cpp
+        src/model/LogValue.cpp
+        src/config/ConfigManager.cpp
     )
 endif()
 
@@ -387,7 +392,7 @@ if (BUILD_TESTS)
             message(STATUS "Custom target 'generateTestReports' added for CTest XML reports.")
         endif()
         # LogAnalyzer Tests
-        add_executable(LogAnalyzerTest test/LogAnalyzerTest.cpp)
+        add_executable(LogAnalyzerTest tests/LogAnalyzerTest.cpp)
         target_link_libraries(LogAnalyzerTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -396,13 +401,22 @@ if (BUILD_TESTS)
         add_test(NAME LogAnalyzerTest COMMAND LogAnalyzerTest)
 
         # LogEntry Tests
-        add_executable(LogEntryTest test/LogEntryTest.cpp)
+        add_executable(LogEntryTest tests/LogEntryTest.cpp)
         target_link_libraries(LogEntryTest PRIVATE
             GTest::gtest_main
             gemini-core
         )
         gemini_cli_apply_global_options(LogEntryTest)
         add_test(NAME LogEntryTest COMMAND LogEntryTest)
+
+        # LogValue Tests
+        add_executable(LogValueTest tests/LogValueTest.cpp)
+        target_link_libraries(LogValueTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(LogValueTest)
+        add_test(NAME LogValueTest COMMAND LogValueTest)
     endif()
 endif()
 
