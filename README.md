@@ -29,13 +29,22 @@ The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive 
 *   **Fluent API**: Easily construct `LogEntry` objects using a builder pattern (e.g., `LogEntry::create(...).withAttribute(...).withTag(...)`).
 *   **Dynamic Context Capture**: Methods to automatically capture system-level information like process ID, host name, system load averages, and memory usage.
 *   **JSON Serialization**: Convert `LogEntry` objects to JSON with extensive customization options:
-    *   Pretty printing
-    *   Inclusion/exclusion of source, thread, tracing info, and empty fields
-    *   Configurable timestamp formats (Default, ISO8601, UnixMillis)
-    *   Adjustable timestamp precision (Seconds, Millis, Micros, Nanos)
-    *   Timezone selection (Local, UTC)
-    *   Binary data encoding (Hex, Base64)
-    *   Custom `strftime` format for timestamps
+    *   **Field-Level Control**:
+        *   `include_fields` / `exclude_fields`: Whitelist or blacklist specific fields (e.g., `timestamp`, `level`, `attributes.hostname`) for fine-grained control over the output.
+        *   `include_source`, `include_thread`, `include_tracing`: Toggle the inclusion of source code location, thread, and tracing context.
+        *   `exclude_empty`: Exclude fields that have empty or null values.
+    *   **Formatting and Indentation**:
+        *   `pretty`: Enable pretty printing for the main log entry structure.
+        *   `pretty_structured_data`: Enable pretty printing for nested JSON objects within attributes.
+        *   `indent_level`: Set the number of spaces for indentation (e.g., 2 or 4).
+        *   `sanitize_strings`: Control automatic escaping of special characters in string values.
+    *   **Timestamp Formatting**:
+        *   `timestamp_format`: Choose between `Default` (string), `ISO8601`, and `UnixMillis`.
+        *   `custom_timestamp_format`: Provide a custom `strftime`-compatible format string.
+        *   `precision`: Adjust timestamp precision (`Seconds`, `Millis`, `Micros`, `Nanos`).
+        *   `timezone`: Set the output timezone (`Local` or `UTC`).
+    *   **Data Encoding**:
+        *   `binary_encoding`: Choose how binary data is encoded (`Hex` or `Base64`).
 *   **Comparison and Utilities**: Supports comparison operations, level parsing, and conversion to `std::map<std::string, LogValue>`.
 
 ### `LogAnalyzer` Features
