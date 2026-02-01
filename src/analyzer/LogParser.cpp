@@ -33,9 +33,10 @@ std::optional<LogEntry> LogParser::parse(const std::string& line, size_t line_nu
         
         if (config_.timestamp_index > 0 && config_.timestamp_index < matches.size()) {
             entry.timestamp = matches[config_.timestamp_index].str();
-            auto parsed_time = LogTimeUtil::parseTimestamp(entry.timestamp, config_.time_format);
-            if (parsed_time) {
-                entry.time_point = *parsed_time;
+            LogTimeUtil::ParseOptions parse_opts;
+            auto parsed_time = LogTimeUtil::parseTimestamp(entry.timestamp, config_.time_format, parse_opts);
+            if (parsed_time.has_value()) {
+                entry.time_point = parsed_time.value();
             }
         }
 
