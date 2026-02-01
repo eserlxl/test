@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
     // CLI11 doesn't have a direct way to set `tempFollow` based on presence of other flags
     // without `fallthrough` or `group`. Let's assume default `opts.tempFollow = true`
     // and let `--lines` or `--no-follow` override it during post-parsing logic.
-    tailCmd->add_flag("--no-follow", opts.tempFollow, "Do not continuously output new lines (exits after --lines).")->negate_flag(); // negate_flag means if present, sets to false
+    tailCmd->add_flag("--no-follow", opts.tempNoFollowFlag, "Do not continuously output new lines (exits after --lines).");
     // New Tail Command Robustness
     tailCmd->add_flag("-F,--follow-name", opts.tempFollowByName, "Follow file by name (re-open if rotated/renamed).");
     tailCmd->add_option("--tail-highlight-regex", opts.tempHighlightRegex, "Highlight lines matching a specific regex during real-time tailing.");
