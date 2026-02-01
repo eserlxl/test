@@ -327,6 +327,8 @@ set(GEMINI_CORE_SOURCES
     src/analyzer/Statistics.cpp
     src/config/CommandLineParser.cpp
     src/config/ConfigManager.cpp
+    src/config/serialization/JsonSerialization.cpp
+    src/config/serialization/YamlSerialization.cpp
     src/model/LogEntry.cpp
     src/model/LogEntryContext.cpp
     src/model/LogEntryDeserializer.cpp
