@@ -931,11 +931,12 @@ std::unique_ptr<LogAnalysis::LogPredicate> LogAnalysis::FilterOptions::toPredica
 }
 
 // --- LogSource Implementation ---
-LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type)
-    : path_(path), type_(type) {
-    if (type_ != SourceType::STD_IN) { // For files and directories, initialize resolved_file_paths_
-        resolved_file_paths_.push_back(path_); // Add the initial path
+LogAnalysis::LogSource::LogSource(const std::string& path, SourceType type, const std::string& url)
+    : path_(path), type_(type), url_(url) {
+    if (type_ == SourceType::FILE || type_ == SourceType::DIRECTORY) {
+        resolved_file_paths_.push_back(path_); // Add the initial path for local files/dirs
     }
+    // For URL and S3 types, the path_ might be empty, and url_ will hold the actual source.
 }
 
 std::vector<std::string> LogAnalysis::LogSource::getFilePaths() const {
@@ -968,7 +969,7 @@ void LogAnalysis::JsonExporter::exportStats(const LogStatistics &stats)
     out_ << "\n  }\n}\n";
 }
 
-void LogAnalysis::JsonExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
+void LogAnalysis::JsonExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export, std::string_view highlight_regex)
 {
     out_ << "[\n";
     for (size_t i = 0; i < entries.size(); ++i)
@@ -995,7 +996,7 @@ void LogAnalysis::CsvExporter::exportStats(const LogStatistics &stats)
     out_ << "duration_seconds," << stats.duration.count() << "\n";
 }
 
-void LogAnalysis::CsvExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
+void LogAnalysis::CsvExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export, std::string_view highlight_regex)
 {
     // Determine headers
     std::vector<std::string> headers = fields_to_export;
@@ -1084,7 +1085,7 @@ void LogAnalysis::MarkdownExporter::exportStats(const LogStatistics &stats)
     }
 }
 
-void LogAnalysis::MarkdownExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
+void LogAnalysis::MarkdownExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export, std::string_view highlight_regex)
 {
     // Determine headers
     std::vector<std::string> headers = fields_to_export;
@@ -1174,8 +1175,22 @@ void LogAnalysis::ConsoleExporter::exportStats(const LogStatistics &stats)
     }
 }
 
-void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export)
+void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> entries, const std::vector<std::string>& fields_to_export, std::string_view highlight_regex)
 {
+    std::optional<std::regex> highlight_re;
+    if (use_color_ && !highlight_regex.empty()) {
+        try {
+            highlight_re.emplace(std::string(highlight_regex));
+        } catch (const std::regex_error& e) {
+            // Log error or ignore invalid regex
+            std::cerr << "Warning: Invalid highlight regex '" << highlight_regex << "': " << e.what() << std::endl;
+            highlight_re.reset();
+        }
+    }
+
+    const std::string highlight_start = use_color_ ? "\033[48;5;208m\033[30m" : ""; // Orange background, black text
+    const std::string highlight_end = use_color_ ? "\033[0m" : "";
+
     for (const auto &entry : entries)
     {
         std::ostringstream oss;
@@ -1207,53 +1222,59 @@ void LogAnalysis::ConsoleExporter::exportEntries(std::span<const ::LogEntry> ent
             oss << "[" << entry.timestamp << "] [" << std::setw(7) << ::LogEntry::levelToString(entry.level) << "] ";
         }
 
+        std::string entry_display_message;
         if (fields_to_export.empty()) {
-            oss << entry.message << "\n";
+            entry_display_message = entry.message;
         } else {
             bool first_field = true;
             for (const auto& field : fields_to_export) {
                 if (!first_field) {
-                    oss << " | ";
+                    entry_display_message += " | ";
                 }
                 if (field == "timestamp") {
-                    oss << entry.timestamp;
+                    entry_display_message += entry.timestamp;
                 } else if (field == "level") {
-                    oss << LogEntry::levelToString(entry.level);
+                    entry_display_message += LogEntry::levelToString(entry.level);
                 } else if (field == "message") {
-                    oss << entry.message;
+                    entry_display_message += entry.message;
                 } else if (field == "raw_line") {
-                    oss << entry.raw_line;
+                    entry_display_message += entry.raw_line;
                 } else if (field == "thread_id") {
-                    oss << entry.thread_id;
+                    entry_display_message += entry.thread_id;
                 } else if (field == "source_file") {
-                    oss << entry.source_file;
+                    entry_display_message += entry.source_file;
                 } else if (field == "source_line") {
-                    oss << entry.source_line;
+                    entry_display_message += std::to_string(entry.source_line);
                 } else if (field == "process_id") {
-                    oss << entry.process_id;
+                    entry_display_message += std::to_string(entry.process_id);
                 } else if (field == "host_name") {
-                    oss << entry.host_name;
+                    entry_display_message += entry.host_name;
                 } else if (field == "app_name") {
-                    oss << entry.app_name;
+                    entry_display_message += entry.app_name;
                 } else if (field == "event_id") {
-                    oss << entry.event_id;
+                    entry_display_message += entry.event_id;
                 } else if (field == "trace_id") {
-                    oss << entry.trace_id;
+                    entry_display_message += entry.trace_id;
                 } else if (field == "span_id") {
-                    oss << entry.span_id;
+                    entry_display_message += entry.span_id;
                 }
                 else {
                     // Check attributes
                     auto attr = entry.getAttribute(field);
                     if (attr) {
-                        oss << attr->toString();
+                        entry_display_message += attr->toString();
                     } else {
-                        oss << "N/A"; // Field not found
+                        entry_display_message += "N/A"; // Field not found
                     }
                 }
                 first_field = false;
             }
-            oss << "\n";
+        }
+
+        if (highlight_re && std::regex_search(entry_display_message, *highlight_re)) {
+            oss << highlight_start << entry_display_message << highlight_end << "\n";
+        } else {
+            oss << entry_display_message << "\n";
         }
         out_ << oss.str();
     }
@@ -1689,12 +1710,6 @@ std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::lo
     std::vector<::LogEntry> collected_entries; // Temporarily store entries from all sources
 
     for (const auto& source : sources) {
-        if (source.getType() == LogAnalysis::LogSource::SourceType::STD_IN) {
-            std::cerr << "Warning: STDIN source type not fully supported yet in loadLogSources. Skipping." << std::endl;
-            total_result.error_count++;
-            continue;
-        }
-
         std::vector<std::string> file_paths_to_load;
         if (source.getType() == LogAnalysis::LogSource::SourceType::DIRECTORY) {
             std::filesystem::path dir_path(source.getPath());
@@ -1715,8 +1730,23 @@ std::expected<LogAnalysis::LoadResult, std::string> LogAnalysis::LogAnalyzer::lo
                     }
                 }
             }
-        } else { // SourceType::FILE
+        } else if (source.getType() == LogAnalysis::LogSource::SourceType::FILE) {
             file_paths_to_load.push_back(source.getPath());
+        } else if (source.getType() == LogAnalysis::LogSource::SourceType::URL || source.getType() == LogAnalysis::LogSource::SourceType::S3) {
+            std::cerr << "Warning: Remote source type (" << (source.getType() == LogAnalysis::LogSource::SourceType::URL ? "URL" : "S3") << ") not fully implemented. Skipping: " << source.getUrl() << std::endl;
+            total_result.error_count++;
+            continue;
+        } else if (source.getType() == LogAnalysis::LogSource::SourceType::STD_IN) {
+             // STDIN is handled via a dedicated stream in main.cpp, not file_paths_to_load.
+             // For now, if passed here, we'll treat it as a file path if available, or skip.
+             // This method primarily focuses on file-based sources.
+             if (source.getPath().empty()) { // Path is empty for pure stdin
+                 std::cerr << "Warning: STDIN source type needs dedicated stream handling. Skipping for now." << std::endl;
+                 total_result.error_count++;
+                 continue;
+             } else {
+                file_paths_to_load.push_back(source.getPath()); // Fallback if STDIN has a path (e.g., /dev/stdin)
+             }
         }
 
         for (const auto& filepath_str : file_paths_to_load) {
@@ -1889,101 +1919,174 @@ void LogAnalysis::LogAnalyzer::tailFileStream(
     }
 
     std::filesystem::path filepath(source.getPath());
-    std::ifstream file(filepath);
-    if (!file.is_open()) {
-        if (error_callback) error_callback({0, "", "Could not open file for tailing: " + filepath.string()});
+    std::ifstream file;
+    std::string entry_buffer;
+    size_t line_count = 0;
+    long long last_pos = 0;
+    std::optional<std::filesystem::file_time_type> last_write_time;
+    std::optional<std::filesystem::file_status> last_status;
+
+    auto open_file = [&]() {
+        file.close(); // Close existing stream if any
+        file.open(filepath);
+        if (!file.is_open()) {
+            if (error_callback) error_callback({0, "", "Could not open file for tailing: " + filepath.string()});
+            return false;
+        }
+        file.seekg(0, std::ios::end);
+        last_pos = file.tellg();
+        last_write_time = std::filesystem::last_write_time(filepath);
+        last_status = std::filesystem::status(filepath);
+        entry_buffer.clear(); // Clear buffer on re-open
+        return true;
+    };
+
+    if (!open_file()) {
         return;
     }
 
-    // Determine starting position:
-    // If tail_count is set, read the last N lines.
-    // Otherwise, start at the end of the file for follow mode.
-    std::vector<LogEntry> initial_entries;
-    std::string line;
-    std::string entry_buffer;
-    size_t line_count = 0;
-
     auto predicate = filter.toPredicate();
-
-    if (retrieval.tail_count > 0 && !retrieval.follow) { // --lines N functionality (read last N lines and exit)
+    std::optional<std::regex> tail_grep_re;
+    if (!retrieval.tail_grep_regex.empty()) {
+        try {
+            tail_grep_re.emplace(retrieval.tail_grep_regex);
+        } catch (const std::regex_error& e) {
+            if (error_callback) error_callback({0, retrieval.tail_grep_regex, "Invalid tail-grep regex: " + std::string(e.what())});
+            return;
+        }
+    }
+    
+    // Initial read for --lines N functionality (read last N lines and exit)
+    if (retrieval.tail_count > 0 && !retrieval.follow) {
         file.seekg(0, std::ios::end);
         long long current_pos = file.tellg();
-        long long start_pos = current_pos;
+        
+        std::vector<std::string> last_n_lines;
+        std::string current_line_read;
 
-        // Try to find the Nth newline from the end
-        size_t newlines_found = 0;
-        while (current_pos > 0 && newlines_found <= retrieval.tail_count) {
+        while(current_pos > 0 && last_n_lines.size() <= retrieval.tail_count) {
             current_pos--;
             file.seekg(current_pos);
             char c;
             file.get(c);
             if (c == '\n') {
-                newlines_found++;
+                last_n_lines.push_back(current_line_read);
+                current_line_read.clear();
+            } else {
+                current_line_read.insert(0, 1, c);
             }
         }
-        if (newlines_found > retrieval.tail_count) {
-            file.seekg(current_pos + 2); // Go past the Nth newline
-        } else {
-            file.seekg(0); // If less than N lines, start from beginning
+        if (!current_line_read.empty()) { // Add the first line if it wasn't terminated by newline
+            last_n_lines.push_back(current_line_read);
         }
-        
-        while (std::getline(file, line)) {
-            line_count++;
+        std::reverse(last_n_lines.begin(), last_n_lines.end()); // Reverse to get in correct order
+
+        // Process only up to tail_count lines and apply filters
+        std::vector<LogEntry> filtered_initial_entries;
+        for (const auto& l : last_n_lines) {
+            if (filtered_initial_entries.size() >= retrieval.tail_count) break;
+
+            if (tail_grep_re && !std::regex_search(l, *tail_grep_re)) {
+                continue; // Skip if it doesn't match --tail-grep-regex
+            }
+
+            // Simulate parsing with entry_start_regex logic
             bool is_new = true;
-            if (this->entry_start_regex_) is_new = std::regex_search(line, *this->entry_start_regex_);
+            if (this->entry_start_regex_) is_new = std::regex_search(l, *this->entry_start_regex_);
 
             if (is_new && !entry_buffer.empty()) {
-                ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
+                LogEntry entry = this->parseLogLine(entry_buffer, ++line_count);
                 this->applyEnrichers(entry);
                 this->applyAnonymizers(entry);
                 if (predicate->test(entry)) {
-                    initial_entries.push_back(std::move(entry));
+                    filtered_initial_entries.push_back(std::move(entry));
                 }
-                entry_buffer = line;
+                entry_buffer = l;
             } else {
                 if (!entry_buffer.empty()) entry_buffer += "\n";
-                entry_buffer += line;
+                entry_buffer += l;
             }
         }
-        if (!entry_buffer.empty()) {
-            ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
+        if (!entry_buffer.empty()) { // Process any remaining buffer
+            LogEntry entry = this->parseLogLine(entry_buffer, ++line_count);
             this->applyEnrichers(entry);
             this->applyAnonymizers(entry);
             if (predicate->test(entry)) {
-                initial_entries.push_back(std::move(entry));
+                filtered_initial_entries.push_back(std::move(entry));
             }
         }
-        
         // Export collected entries for --lines N
-        exporter.exportEntries({initial_entries.data(), initial_entries.size()}, retrieval.fields_to_export);
+        exporter.exportEntries({filtered_initial_entries.data(), filtered_initial_entries.size()}, retrieval.fields_to_export, retrieval.highlight_regex);
         return; // Exit after printing N lines
     }
 
     // Continuous tailing (follow mode)
-    file.seekg(0, std::ios::end); // Start at the end of the file
-    auto last_pos = file.tellg();
-    entry_buffer.clear();
-    line_count = 0;
-
     while (!this->stop_tailing_ptr_->load()) { // Loop until stop_tailing_ptr_ is set to true
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Polling interval
 
-        if (!std::filesystem::exists(filepath)) {
-            if (error_callback) error_callback({0, "", "Tailing: File not found: " + filepath.string() + ". Retrying..."});
+        file.clear(); // Clear any error flags
+
+        std::filesystem::file_status current_status;
+        std::error_code ec;
+        current_status = std::filesystem::status(filepath, ec);
+
+        if (ec) {
+            if (error_callback) error_callback({0, "", "Tailing: Failed to get file status: " + ec.message() + ". Retrying..."});
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // Longer pause on error
             continue;
         }
 
-        file.clear(); // Clear any error flags
-        std::error_code ec;
+        if (!std::filesystem::exists(filepath)) {
+            if (error_callback) error_callback({0, "", "Tailing: File not found: " + filepath.string() + ". Retrying..."});
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // Longer pause
+            file.close(); // Close stream as file is gone
+            // Wait for file to reappear, then re-open
+            while (!this->stop_tailing_ptr_->load() && !std::filesystem::exists(filepath)) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+            if (this->stop_tailing_ptr_->load()) break; // Stop if requested while waiting
+            if (!open_file()) { // Re-open if file reappeared
+                std::this_thread::sleep_for(std::chrono::seconds(1)); // Pause before retry
+                continue;
+            }
+            last_pos = 0; // Reset last_pos after file disappears and reappears
+            continue;
+        }
+
+        // Handle log rotation by name (-F)
+        if (retrieval.follow_by_name) {
+            if (last_status && std::filesystem::equivalent(filepath, *last_status, ec)) {
+                // If the file is still the same, check write time for changes
+                 auto current_write_time = std::filesystem::last_write_time(filepath, ec);
+                 if (!ec && last_write_time && current_write_time < *last_write_time) {
+                    // File was truncated/replaced and has an older write time, re-open
+                    if (error_callback) error_callback({0, "", "Tailing: File rotated/truncated (older write time). Re-opening."});
+                    if (!open_file()) {
+                        std::this_thread::sleep_for(std::chrono::seconds(1));
+                        continue;
+                    }
+                    continue;
+                 }
+            } else {
+                 // File is not equivalent (likely rotated and new file created with same name)
+                 if (error_callback) error_callback({0, "", "Tailing: File rotated (different inode). Re-opening."});
+                 if (!open_file()) {
+                     std::this_thread::sleep_for(std::chrono::seconds(1));
+                     continue;
+                 }
+                 continue;
+            }
+        }
+        
         auto current_size = std::filesystem::file_size(filepath, ec);
         if (ec) {
              if (error_callback) error_callback({0, "", "Tailing: Failed to get file size: " + ec.message()});
              continue;
         }
 
-
         if (current_size < static_cast<size_t>(last_pos)) {
-            // File was truncated or reset (e.g., log rotation)
+            // File was truncated or reset (e.g., log rotation).
+            // Re-read from beginning.
             if (error_callback) error_callback({0, "", "Tailing: File truncated or rotated. Re-reading from beginning."});
             file.seekg(0, std::ios::beg);
             last_pos = 0;
@@ -1992,12 +2095,55 @@ void LogAnalysis::LogAnalyzer::tailFileStream(
             // New content available
             file.seekg(last_pos);
             std::string current_line;
+            std::vector<LogEntry> entries_to_export;
+
             while (std::getline(file, current_line)) {
-                line_count++;
+                if (this->stop_tailing_ptr_->load()) break; // Check stop signal inside inner loop
+
+                // Apply tail-grep-regex
+                if (tail_grep_re && !std::regex_search(current_line, *tail_grep_re)) {
+                    continue; // Skip this line if it doesn't match the grep regex
+                }
+
+                // Simulate parsing with entry_start_regex logic
                 bool is_new = true;
                 if (this->entry_start_regex_) is_new = std::regex_search(current_line, *this->entry_start_regex_);
 
                 if (is_new && !entry_buffer.empty()) {
+                    LogEntry entry = this->parseLogLine(entry_buffer, ++line_count);
+                    this->applyEnrichers(entry);
+                    this->applyAnonymizers(entry);
+                    if (predicate->test(entry)) {
+                        entries_to_export.push_back(std::move(entry));
+                    }
+                    entry_buffer = current_line;
+                } else {
+                    if (!entry_buffer.empty()) entry_buffer += "\n";
+                    entry_buffer += current_line;
+                }
+            }
+            if (this->stop_tailing_ptr_->load()) break; // Check stop signal after inner loop
+
+            // Export any accumulated entries
+            if (!entries_to_export.empty()) {
+                exporter.exportEntries({entries_to_export.data(), entries_to_export.size()}, retrieval.fields_to_export, retrieval.highlight_regex);
+            }
+            last_pos = file.tellg();
+        }
+    }
+    // Process any remaining buffer upon stopping
+    if (!entry_buffer.empty()) {
+        LogEntry entry = this->parseLogLine(entry_buffer, ++line_count);
+        this->applyEnrichers(entry);
+        this->applyAnonymizers(entry);
+        if (predicate->test(entry)) {
+            // Need to create a single-element vector for exportEntries
+            std::vector<LogEntry> final_entry_vec;
+            final_entry_vec.push_back(std::move(entry));
+            exporter.exportEntries({final_entry_vec.data(), final_entry_vec.size()}, retrieval.fields_to_export, retrieval.highlight_regex);
+        }
+    }
+}
                     ::LogEntry entry = this->parseLogLine(entry_buffer, line_count);
                     this->applyEnrichers(entry);
                     this->applyAnonymizers(entry);

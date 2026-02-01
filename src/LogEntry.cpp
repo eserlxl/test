@@ -1332,7 +1332,7 @@ bool LogEntry::hasAttribute(const std::string &key) const
     return attributes.contains(key);
 }
 
-std::optional<LogValue> LogEntry::getAttribute(const std::string &key) const
+std::optional<LogValue> LogEntry::getAttribute(std::string_view key) const
 {
     auto it = attributes.find(key);
     if (it != attributes.end())

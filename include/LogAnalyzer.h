@@ -2,6 +2,7 @@
 #define LOG_ANALYZER_H
 
 #include "LogEntry.h"
+#include "LogAnalysisConfig.h" // Include for FieldFilter and FilterLogic
 #include <vector>
 #include <string>
 #include <map>
@@ -94,160 +95,6 @@ struct SessionConfig {
     std::vector<std::string> session_end_patterns;   // Regex patterns to identify session end
 };
 
-struct LogSession {
-    std::string session_id_value;
-    std::chrono::system_clock::time_point start_time;
-    std::chrono::system_clock::time_point end_time;
-    std::vector<LogEntry> entries; // Sorted by timestamp
-    LogStatistics session_stats; // Statistics specific to this session
-};
-
-// 1.4 Custom Aggregations/Metrics
-using CustomAggregationFunction = std::function<LogValue(const std::vector<LogEntry>&)>;
-
-struct CustomAggregation {
-    std::string name; // Name of the aggregated metric
-    std::string group_by_attribute; // Attribute to group entries by before aggregating
-    CustomAggregationFunction aggregate_func; // User-provided function
-};
-
-// 4.1 In-Memory Indexing
-struct IndexingConfig {
-    std::set<std::string> attributes_to_index; // Attributes on which to build indices
-    bool index_timestamps = true;
-    bool index_levels = true;
-    size_t min_cardinality_for_index = 100; // Only index attributes with enough distinct values
-};
-
-// 4.2 Optimized LogEntry Storage
-enum class LogStorageStrategy {
-    DEFAULT_COPY_STRINGS,   // Current behavior: copy all strings
-    STRING_INTERNING,       // Store unique strings once, use pointers/indices
-    COMPRESSED_FIELDS       // e.g., run-length encoding for common fields, or lightweight compression
-};
-
-
-/**
- * @brief Abstract interface for providing raw log lines to the LogAnalyzer.
- *        Implementations can read from various sources (files, network, database, etc.)
- *        in a line-by-line fashion.
- */
-class ILogInputStream {
-public:
-    virtual ~ILogInputStream() = default;
-
-    /**
-     * @brief Reads the next raw log line from the stream.
-     * @return An optional string containing the log line, or std::nullopt if end of stream is reached.
-     *         The string returned should be a complete line (e.g., without newline characters).
-     * @throws std::ios_base::failure or other exceptions on unrecoverable I/O errors.
-     */
-    virtual std::optional<std::string> readLine() = 0;
-
-    /**
-     * @brief Provides an estimate of the total bytes available from the entire stream, if known.
-     *        This is primarily used for progress reporting.
-     * @return An optional size_t representing the total size in bytes, or std::nullopt if unknown.
-     */
-    virtual std::optional<size_t> getTotalBytes() const { return std::nullopt; }
-
-    /**
-     * @brief Provides the current number of bytes that have been successfully read from the stream.
-     *        This is primarily used for progress reporting.
-     * @return The number of bytes processed so far, or 0 if not tracked.
-     */
-    virtual size_t getBytesProcessed() const { return 0; }
-
-    /**
-     * @brief Provides a descriptive name for the input stream, useful for logging or UI.
-     * @return A string representing the source (e.g., "file:///path/to/log.log", "s3://bucket/key").
-     */
-    virtual std::string getSourceName() const = 0;
-};
-
-
-// Represents a collection of log files/sources
-class LogSource {
-public:
-    enum class SourceType { FILE, DIRECTORY, STD_IN };
-
-    // Constructor for file paths
-    explicit LogSource(const std::string& path, SourceType type = SourceType::FILE);
-
-    // Get all individual log file paths to process
-    std::vector<std::string> getFilePaths() const;
-
-    SourceType getType() const { return type_; }
-    const std::string& getPath() const { return path_; }
-
-private:
-    std::string path_;
-    SourceType type_;
-    // Internal list of resolved file paths
-    mutable std::vector<std::string> resolved_file_paths_; 
-    void resolveFilePaths() const; // Helper to populate resolved_file_paths_
-};
-
-/**
- * @brief Concrete implementation of ILogInputStream that reads from LogSource objects.
- *        This class adapts the existing LogSource functionality (files, directories, stdin)
- *        to the new ILogInputStream interface. It handles iterating through multiple files
- *        if the LogSource represents a directory.
- */
-class LogSourceInputStream : public ILogInputStream {
-public:
-    /**
-     * @brief Constructs a LogSourceInputStream from an existing LogSource.
-     * @param source The LogSource specifying the log file(s) or directory.
-     * @contract The LogSource must be valid and its paths resolvable.
-     */
-    explicit LogSourceInputStream(const LogSource& source);
-    ~LogSourceInputStream() override; // Ensure file streams are closed
-
-    std::optional<std::string> readLine() override;
-    std::optional<size_t> getTotalBytes() const override;
-    size_t getBytesProcessed() const override;
-    std::string getSourceName() const override;
-
-private:
-    LogSource source_;
-    std::vector<std::string> file_paths_;
-    size_t current_file_index_ = 0;
-    std::unique_ptr<std::ifstream> current_file_stream_;
-    size_t overall_bytes_processed_ = 0;
-    std::optional<size_t> cached_total_bytes_; // Cache total bytes after calculation
-
-    void openNextFile(); // Helper to open the next file in the list
-    void calculateTotalBytes(); // Helper to calculate total bytes across all files
-};
-
-// 2.2 Database Integration
-class ILogDataStore {
-public:
-    virtual ~ILogDataStore() = default;
-
-    /**
-     * @brief Loads log entries from the data store.
-     * @return A vector of LogEntry.
-     * @throws std::runtime_error on failure.
-     */
-    virtual std::vector<LogEntry> loadEntries() = 0;
-
-    /**
-     * @brief Exports log entries to the data store.
-     * @param entries The log entries to export.
-     * @throws std::runtime_error on failure.
-     */
-    virtual void exportEntries(std::span<const LogEntry> entries) = 0;
-
-    /**
-     * @brief Exports aggregated statistics to the data store.
-     * @param stats The LogStatistics to export.
-     * @throws std::runtime_error on failure.
-     */
-    virtual void exportStatistics(const LogStatistics& stats) = 0;
-};
-
 // 2.3 Custom Output Templates
 class ITemplatingEngine {
 public:
@@ -305,6 +152,22 @@ struct LogStatistics {
     std::map<std::string, std::vector<std::pair<std::string, size_t>>> top_string_attribute_occurrences;
 };
 
+// 1.3 Session/Transaction Tracing
+struct SessionConfig {
+    std::string session_id_attribute; // e.g., "session_id", "request_id"
+    std::optional<std::chrono::system_clock::duration> session_timeout; // Max inactivity between logs in a session
+    std::vector<std::string> session_start_patterns; // Regex patterns to identify session start
+    std::vector<std::string> session_end_patterns;   // Regex patterns to identify session end
+};
+
+struct LogSession {
+    std::string session_id_value;
+    std::chrono::system_clock::time_point start_time;
+    std::chrono::system_clock::time_point end_time;
+    std::vector<LogEntry> entries; // Sorted by timestamp
+    LogStatistics session_stats; // Statistics specific to this session
+};
+
 // --- NEW Iteration 8: Analysis Configuration ---
 struct AnalysisConfig {
     // Attributes for which to compute the full value distribution.
@@ -329,6 +192,10 @@ struct AnalysisConfig {
     std::optional<SessionConfig> session_config; // New
     std::vector<CustomAggregation> custom_aggregations; // New
     std::optional<IndexingConfig> indexing_config; // New
+
+    // NEW Iteration 28 Analysis Capabilities
+    std::vector<AggregateFunction> aggregate_functions;
+    std::string time_window_duration; // e.g., "1h", "5m"
 };
 
 struct ParseError {
@@ -506,6 +373,11 @@ struct RetrievalOptions {
     bool sort_descending = false; // default to ascending for entries
     bool follow = true; // For tail command, true means continuous output
     std::vector<std::string> fields_to_export; // New: fields to display
+
+    // NEW Iteration 28 Tail Command Robustness
+    bool follow_by_name = false; // For -F equivalent
+    std::string highlight_regex;  // For --tail-highlight-regex
+    std::string tail_grep_regex;  // For --tail-grep
 };
 
 struct FilterOptions {
@@ -544,6 +416,16 @@ struct FilterOptions {
     std::optional<std::chrono::system_clock::duration> since;
     std::vector<std::string> any_keywords;
 
+    // NEW Iteration 28 Filtering Enhancements
+    std::vector<std::string> include_keywords;
+    std::vector<std::string> exclude_keywords;
+    std::vector<std::string> include_regexes;
+    std::vector<std::string> exclude_regexes;
+    std::optional<std::pair<LogLevel, LogLevel>> level_range; // Uses LogEntry::Level
+    std::vector<FieldFilter> field_filters;
+    FilterLogic combined_filter_logic = FilterLogic::AND;
+    std::string timezone_str; // For parsing and comparison
+
     // Convert legacy options to a predicate
     std::unique_ptr<LogPredicate> toPredicate() const;
 
@@ -576,7 +458,7 @@ class LogExporter {
 public:
     virtual ~LogExporter() = default;
     virtual void exportStats(const LogStatistics& stats) = 0;
-    virtual void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) = 0;
+    virtual void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") = 0;
 };
 
 class JsonExporter : public LogExporter {
@@ -585,7 +467,7 @@ class JsonExporter : public LogExporter {
 public:
     explicit JsonExporter(std::ostream& out, bool pretty = false) : out_(out), pretty_(pretty) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") override;
 };
 
 class CsvExporter : public LogExporter {
@@ -593,7 +475,7 @@ class CsvExporter : public LogExporter {
 public:
     explicit CsvExporter(std::ostream& out) : out_(out) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") override;
 };
 
 class MarkdownExporter : public LogExporter {
@@ -601,7 +483,7 @@ class MarkdownExporter : public LogExporter {
 public:
     explicit MarkdownExporter(std::ostream& out) : out_(out) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") override;
 };
 
 class ConsoleExporter : public LogExporter {
@@ -611,7 +493,7 @@ public:
     explicit ConsoleExporter(std::ostream& out, bool use_color = true) 
         : out_(out), use_color_(use_color) {}
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") override;
 };
 
 class TemplatedExporter : public LogExporter {
@@ -625,7 +507,7 @@ public:
                                std::string entry_template,
                                std::string stats_template = "");
     void exportStats(const LogStatistics& stats) override;
-    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}) override;
+    void exportEntries(std::span<const LogEntry> entries, const std::vector<std::string>& fields_to_export = {}, std::string_view highlight_regex = "") override;
 };
 
 // --- NEW Iteration 8: Log Anonymization / Redaction ---

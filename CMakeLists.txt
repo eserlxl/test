@@ -319,11 +319,13 @@ if (BUILD_SHARED_LIBS)
     add_library(gemini-core SHARED
         src/LogAnalyzer.cpp
         src/LogEntry.cpp
+        src/ConfigManager.cpp # Add ConfigManager.cpp to the core library
     )
 else()
     add_library(gemini-core STATIC
         src/LogAnalyzer.cpp
         src/LogEntry.cpp
+        src/ConfigManager.cpp # Add ConfigManager.cpp to the core library
     )
 endif()
 
@@ -332,11 +334,21 @@ target_include_directories(gemini-core PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/gemini-cli>
 )
 
+target_link_libraries(gemini-core PRIVATE
+    yaml-cpp::yaml-cpp
+    nlohmann_json::nlohmann_json # Or just nlohmann_json if target is not namespaced
+)
+
 gemini_cli_apply_global_options(gemini-core)
 
 # --- Main Executable ---
 add_executable(gemini-cli src/main.cpp)
-target_link_libraries(gemini-cli PRIVATE gemini-core CLI11::CLI11)
+target_link_libraries(gemini-cli PRIVATE
+    gemini-core
+    CLI11::CLI11
+    yaml-cpp::yaml-cpp
+    nlohmann_json::nlohmann_json # Link to executable as well
+)
 
 gemini_cli_apply_global_options(gemini-cli)
 
@@ -393,6 +405,11 @@ if (BUILD_TESTS)
         add_test(NAME LogEntryTest COMMAND LogEntryTest)
     endif()
 endif()
+
+# Find yaml-cpp and nlohmann/json for configuration management
+find_package(yaml-cpp CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED) # Assumes nlohmann_json provides a CMake config
+
 
 # --- Benchmarking Setup ---
 if (BUILD_BENCHMARKS)
