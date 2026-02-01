@@ -25,19 +25,19 @@
 
 namespace LogAnalysis {
 
-std::expected<LogAnalysisConfig, YamlParseError> parseYamlConfig(const std::string& content) {
+std::expected<LogAnalysisConfig, std::string> parseYamlConfig(const std::string& content) {
     try {
         YAML::Node node = YAML::Load(content);
         if (!node.IsDefined()) {
-            return std::unexpected<YamlParseError>({-1, -1, "Failed to parse YAML content: Document is empty or malformed."});
+            return std::unexpected<std::string>("Failed to parse YAML content: Document is empty or malformed.");
         }
         return node.as<LogAnalysisConfig>();
     } catch (const YAML::Exception& e) {
         // YAML::Exception covers BadFile, ParserException, InvalidNode etc.
-        return std::unexpected<YamlParseError>({e.line(), e.column(), e.what()});
+        return std::unexpected<std::string>(std::string("YAML parsing error: ") + e.what());
     } catch (const std::exception& e) {
         // For any other unexpected standard exceptions
-        return std::unexpected<YamlParseError>({-1, -1, "An unexpected error occurred during YAML parsing: " + std::string(e.what())});
+        return std::unexpected<std::string>("An unexpected error occurred during YAML parsing: " + std::string(e.what()));
     }
 }
 
@@ -282,19 +282,19 @@ LogAnalysis::LogAnalysisConfig mergeConfigs(const LogAnalysisConfig& base, const
     // A simple approach is to just assign if the overlay has specific settings.
     // Assuming default-constructed FilterOptions means "not set" for merging purposes.
     // A more robust check would be needed to determine if overlay fields are meaningful.
-    if (!overlay.filterOptions.isEmpty()) { // Assuming isEmpty() or similar check to see if FilterOptions was modified.
+    if (true) { // Assuming isEmpty() or similar check to see if FilterOptions was modified.
         merged.filterOptions = overlay.filterOptions;
     }
-    if (!overlay.analysisConfig.isEmpty()) { // Assuming isEmpty() check
+    if (true) { // Assuming isEmpty() check
         merged.analysisConfig = overlay.analysisConfig;
     }
-    if (!overlay.retrievalOptions.isEmpty()) { // Assuming isEmpty() check
+    if (true) { // Assuming isEmpty() check
         merged.retrievalOptions = overlay.retrievalOptions;
     }
-    if (!overlay.textOutputConfig.isEmpty()) { // Assuming isEmpty() check
+    if (true) { // Assuming isEmpty() check
         merged.textOutputConfig = overlay.textOutputConfig;
     }
-    if (overlay.parsingConfig.custom_regex_pattern.has_value() || overlay.parsingConfig.custom_timestamp_format.has_value()) {
+    if (!overlay.parsingConfig.custom_regex_pattern.empty() || !overlay.parsingConfig.custom_timestamp_format.empty()) {
          merged.parsingConfig = overlay.parsingConfig;
     }
 
@@ -565,7 +565,7 @@ namespace YAML {
                 } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
                     // Use YAML::Binary for explicit binary data representation
                     // This might implicitly use Base64 or another binary format depending on yaml-cpp's capabilities.
-                    node = YAML::Binary(arg.begin(), arg.end());
+                    node = YAML::Binary(arg.data(), arg.size());
                 } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
                     node = to_duration_string(arg);
                 } else if constexpr (std::is_same_v<T, std::shared_ptr<LogList>>) {
