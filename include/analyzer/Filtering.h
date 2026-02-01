@@ -38,6 +38,7 @@ namespace LogAnalysis {
         virtual bool test(const LogEntry& entry) const = 0;
         virtual std::unique_ptr<LogPredicate> clone() const = 0;
         virtual std::string toString() const { return "LogPredicate"; }
+        virtual std::string toJson() const = 0; // Add this
     };
 
     namespace Filters {
@@ -81,6 +82,29 @@ namespace LogAnalysis {
     struct FilterOptions {
         std::unique_ptr<LogPredicate> root_predicate; // Primary filtering logic
         std::string timezone_str; // Remains, as it affects time predicate interpretation.
+
+        // Default constructor
+        FilterOptions() = default;
+
+        // Copy constructor
+        FilterOptions(const FilterOptions& other) 
+            : root_predicate(other.root_predicate ? other.root_predicate->clone() : nullptr),
+              timezone_str(other.timezone_str) {}
+
+        // Copy assignment operator
+        FilterOptions& operator=(const FilterOptions& other) {
+            if (this != &other) {
+                root_predicate = (other.root_predicate ? other.root_predicate->clone() : nullptr);
+                timezone_str = other.timezone_str;
+            }
+            return *this;
+        }
+
+        // Move constructor
+        FilterOptions(FilterOptions&& other) noexcept = default;
+
+        // Move assignment operator
+        FilterOptions& operator=(FilterOptions&& other) noexcept = default;
 
         // --- Convenience Builder Methods ---
         // These methods construct and compose predicates for the root_predicate.
