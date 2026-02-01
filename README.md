@@ -65,7 +65,7 @@ The `LogAnalyzer` class provides a high-level interface for processing, analyzin
 *   **Log Enrichment and Anonymization**:
     *   **Enrichment**: Add contextual information to log entries on-the-fly using custom `LogEnricher` functions.
     *   **Anonymization**: Automatically find and redact sensitive data (like PII, passwords, or tokens) using the `LogAnonymizer` framework and `RegexAnonymizer`.
-*   **Configuration Persistence**: Serialize parsing (`ParsingConfig`) and filtering (`FilterOptions`) configurations to and from JSON, making it easy to save, share, and reuse settings.
+*   **Configuration Persistence**: Serialize parsing (`ParsingConfig`) and filtering (`FilterOptions`) configurations to and from JSON and YAML, making it easy to save, share, and reuse settings.
 *   **Multiple Export Formats**: Export analysis results or filtered log entries to various formats, including human-readable text, JSON, CSV, and Markdown, using a flexible `LogExporter` interface.
 
 ## Build Instructions
