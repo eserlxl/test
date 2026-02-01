@@ -320,6 +320,10 @@ set(GEMINI_CORE_SOURCES
     src/analyzer/Exporters.cpp
     src/analyzer/Filtering.cpp
     src/analyzer/LogAnalyzer.cpp
+    src/analyzer/LogFilterer.cpp
+    src/analyzer/LogLoader.cpp
+    src/analyzer/LogParser.cpp
+    src/analyzer/LogStatisticsCalculator.cpp
     src/analyzer/ParsingConfig.cpp
     src/analyzer/ReportGenerator.cpp
     src/analyzer/Statistics.cpp
