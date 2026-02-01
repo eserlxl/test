@@ -9,11 +9,11 @@
 
 #include "CLI/CLI.hpp" // CLI11 header
 
-#include "LogAnalyzer.h"
-#include "LogEntry.h"
-#include "ConfigManager.h" // New: For configuration management
-#include "LogAnalysisConfig.h" // New: For the unified configuration struct
-#include "CommandLineOptions.h" // New: Definition of CommandLineOptions struct
+#include <analyzer/LogAnalyzer.h>
+#include <model/LogEntry.h>
+#include <config/ConfigManager.h>
+#include <config/LogAnalysisConfig.h>
+#include <config/CommandLineOptions.h>
 
 // CLI11 will handle argument parsing and help message generation.
 
