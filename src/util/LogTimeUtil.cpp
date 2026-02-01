@@ -1,10 +1,11 @@
 #include <util/LogTimeUtil.h>
-#include <model/LogEntry.h>
+#include <model/LogFormattingOptions.h> // For enums
 #include <iomanip>
 #include <sstream>
 #include <ctime>
 #include <chrono>
 #include <cctype>
+#include <locale> // Required for std::locale
 
 namespace LogTimeUtil {
 
@@ -14,49 +15,54 @@ namespace LogTimeUtil {
     inline time_t my_timegm(struct tm* tm) { return timegm(tm); }
 #endif
 
+    // Forward declare the helper function
+    std::optional<std::chrono::system_clock::time_point> parseIso8601WithOffset(
+        std::string_view timestamp_str
+    );
+
     std::string formatTimestamp(
         std::chrono::system_clock::time_point tp,
-        LogTimestampFormat format_type,
+        LogFormattingOptions::TimestampFormat format_type,
         const FormatOptions& opts
     ) {
         if (tp.time_since_epoch().count() == 0)
             return "";
 
         std::time_t tt = std::chrono::system_clock::to_time_t(tp);
-        std::tm tm = {};
+        std::tm tm_struct = {};
         
-        if (opts.timezone == LogTimezone::UTC) {
+        if (opts.timezone == LogFormattingOptions::Timezone::UTC) {
 #if defined(_WIN32) || defined(_WIN64)
-            gmtime_s(&tm, &tt);
+            gmtime_s(&tm_struct, &tt);
 #else
-            gmtime_r(&tt, &tm);
+            gmtime_r(&tt, &tm_struct);
 #endif
         } else {
 #if defined(_WIN32) || defined(_WIN64)
-            localtime_s(&tm, &tt);
+            localtime_s(&tm_struct, &tt);
 #else
-            localtime_r(&tt, &tm);
+            localtime_r(&tt, &tm_struct);
 #endif
         }
 
         std::ostringstream ss;
-        if (opts.custom_format.has_value()) {
+        if (format_type == LogFormattingOptions::TimestampFormat::Custom && opts.custom_format.has_value()) {
             char buffer[128];
-            if (std::strftime(buffer, sizeof(buffer), opts.custom_format->c_str(), &tm) > 0) {
+            if (std::strftime(buffer, sizeof(buffer), opts.custom_format->c_str(), &tm_struct) > 0) {
                 ss << buffer;
             }
-        } else if (format_type == LogTimestampFormat::ISO8601) {
-            ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
+        } else if (format_type == LogFormattingOptions::TimestampFormat::ISO8601 || format_type == LogFormattingOptions::TimestampFormat::RFC3339) {
+            ss << std::put_time(&tm_struct, "%Y-%m-%dT%H:%M:%S");
 
             auto epoch = tp.time_since_epoch();
-            if (opts.precision != LogPrecision::Seconds) {
+            if (opts.precision != LogFormattingOptions::Precision::Seconds) {
                 ss << ".";
                 long long fractional_part = 0;
                 int width = 0;
-                if (opts.precision == LogPrecision::Millis) {
+                if (opts.precision == LogFormattingOptions::Precision::Millis) {
                     fractional_part = std::chrono::duration_cast<std::chrono::milliseconds>(epoch).count() % 1000;
                     width = 3;
-                } else if (opts.precision == LogPrecision::Micros) {
+                } else if (opts.precision == LogFormattingOptions::Precision::Micros) {
                     fractional_part = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count() % 1000000;
                     width = 6;
                 } else { // Nanos
@@ -65,32 +71,90 @@ namespace LogTimeUtil {
                 }
                 ss << std::setfill('0') << std::setw(width) << fractional_part;
             }
-            if (opts.timezone == LogTimezone::UTC) {
+            if (opts.timezone == LogFormattingOptions::Timezone::UTC) {
                 ss << "Z";
             }
-        } else if (format_type == LogTimestampFormat::UnixMillis) {
-            ss << std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
-        } else { // Default format (YYYY-MM-DD HH:MM:SS.mmm)
-            ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-            if (opts.precision != LogPrecision::Seconds) {
-                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              tp.time_since_epoch()) %
-                          1000;
-                ss << "." << std::setfill('0') << std::setw(3) << ms.count();
-            }
+        } else if (format_type == LogFormattingOptions::TimestampFormat::UnixMillis) { // Assuming UnixMillis from another file. Changed to Unix
+             ss << std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
         }
         return ss.str();
+    }
+    
+    std::string formatTimestamp(
+        std::chrono::system_clock::time_point tp,
+        const FormatOptions& opts
+    ) {
+        return formatTimestamp(tp, opts.format, opts);
+    }
+    
+    std::string generateLogEntryTimestampString(
+        std::chrono::system_clock::time_point tp,
+        LogFormattingOptions options
+    ) {
+        FormatOptions opts;
+        opts.format = options.timestamp_format;
+        opts.precision = options.precision;
+        opts.timezone = options.timezone;
+        opts.custom_format = options.custom_timestamp_format;
+        return formatTimestamp(tp, opts);
     }
 
     std::string generateLogEntryTimestampString(
         std::chrono::system_clock::time_point tp,
         const LogFormattingOptions& options
     ) {
-        FormatOptions opts;
-        opts.precision = options.precision;
-        opts.timezone = options.timezone;
-        opts.custom_format = options.custom_timestamp_format;
-        return formatTimestamp(tp, options.timestamp_format, opts);
+        return generateLogEntryTimestampString(tp, options);
+    }
+
+
+    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str,
+        LogFormattingOptions::TimestampFormat format_type,
+        bool strict
+    ) {
+        if (format_type == LogFormattingOptions::TimestampFormat::ISO8601 || format_type == LogFormattingOptions::TimestampFormat::RFC3339) {
+            return parseIso8601WithOffset(timestamp_str);
+        } else if (format_type == LogFormattingOptions::TimestampFormat::UnixMillis) {
+            try {
+                std::string s(timestamp_str);
+                size_t pos;
+                long long ms = std::stoll(s, &pos);
+                if (pos == s.length()) {
+                    return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
+                }
+            } catch (...) {}
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str,
+        LogFormattingOptions::TimestampFormat format_type
+    ) {
+        return parseTimestamp(timestamp_str, format_type, true);
+    }
+
+    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str,
+        std::string_view format_str
+    ) {
+        std::chrono::system_clock::time_point tp;
+        std::istringstream ss{std::string(timestamp_str)};
+        ss.imbue(std::locale("C"));
+        
+        std::string format_string_copy(format_str);
+        ss >> std::chrono::parse(format_string_copy, tp);
+
+        if (ss.fail()) {
+            return std::nullopt;
+        }
+        return tp;
+    }
+    
+    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
+        std::string_view timestamp_str
+    ) {
+        return parseTimestamp(timestamp_str, LogFormattingOptions::TimestampFormat::ISO8601, true);
     }
 
     std::optional<std::chrono::system_clock::time_point> parseIso8601WithOffset(
@@ -141,7 +205,6 @@ namespace LogTimeUtil {
             int oh = 0, om = 0;
             bool parsed_offset = false;
             
-            // Try reading HH:MM or HHMM
             std::string offset_remaining;
             tss >> offset_remaining;
             if (!offset_remaining.empty()) {
@@ -179,84 +242,20 @@ namespace LogTimeUtil {
         return std::chrono::system_clock::from_time_t(tt) + std::chrono::nanoseconds(nanos);
     }
 
-    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
-        std::string_view timestamp_str,
-        LogTimestampFormat format_type
-    ) {
-        if (format_type == LogTimestampFormat::ISO8601) {
-            return parseIso8601WithOffset(timestamp_str);
-        } else if (format_type == LogTimestampFormat::UnixMillis) {
-            try {
-                std::string s(timestamp_str);
-                size_t pos;
-                long long ms = std::stoll(s, &pos);
-                if (pos == s.length()) {
-                    return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
-                }
-            } catch (...) {}
+    std::string to_string(std::chrono::nanoseconds ns) {
+        std::ostringstream oss;
+        if (ns.count() == 0) {
+            oss << "0ns";
+        } else if (ns.count() % 1000000000 == 0) {
+            oss << std::chrono::duration_cast<std::chrono::seconds>(ns).count() << "s";
+        } else if (ns.count() % 1000000 == 0) {
+            oss << std::chrono::duration_cast<std::chrono::milliseconds>(ns).count() << "ms";
+        } else if (ns.count() % 1000 == 0) {
+            oss << std::chrono::duration_cast<std::chrono::microseconds>(ns).count() << "us";
+        } else {
+            oss << ns.count() << "ns";
         }
-        return std::nullopt; // Explicitly return nullopt on failure, no fallback
-    }
-
-    std::optional<std::chrono::system_clock::time_point> parseTimestamp(
-        std::string_view timestamp_str
-    ) {
-        if (auto tp = parseIso8601WithOffset(timestamp_str)) return tp;
-        
-        // Try default format YYYY-MM-DD HH:MM:SS.mmm
-        std::tm tm = {};
-        std::istringstream ss{std::string(timestamp_str)};
-        int y, mon, d, H, M, S;
-        char d1, d2, c1, c2;
-        if (ss >> y >> d1 >> mon >> d2 >> d >> H >> c1 >> M >> c2 >> S) {
-            tm.tm_year = y - 1900;
-            tm.tm_mon = mon - 1;
-            tm.tm_mday = d;
-            tm.tm_hour = H;
-            tm.tm_min = M;
-            tm.tm_sec = S;
-            tm.tm_isdst = -1;
-            std::time_t tt = std::mktime(&tm);
-            if (tt != -1) {
-                auto tp = std::chrono::system_clock::from_time_t(tt);
-                if (ss.peek() == '.') {
-                    ss.ignore();
-                    std::string frac_str;
-                    while (ss.good() && std::isdigit(ss.peek())) frac_str += static_cast<char>(ss.get());
-                    if (!frac_str.empty()) {
-                        frac_str.resize(9, '0');
-                        tp += std::chrono::nanoseconds(std::stoll(frac_str));
-                    }
-                }
-                return tp;
-            }
-        }
-
-        // Try Unix Millis
-        try {
-            std::string s(timestamp_str);
-            size_t pos;
-            long long ms = std::stoll(s, &pos);
-            if (pos == s.length()) {
-                return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
-            }
-        } catch (...) {}
-
-        return std::nullopt;
-    }
-
-    std::chrono::system_clock::duration timeDifference(
-        std::chrono::system_clock::time_point tp1,
-        std::chrono::system_clock::time_point tp2
-    ) {
-        return tp1 - tp2;
-    }
-
-    std::chrono::system_clock::duration timeDifference(
-        const LogEntry& entry1,
-        const LogEntry& entry2
-    ) {
-        return entry1.time_point - entry2.time_point;
+        return oss.str();
     }
 
 } // namespace LogTimeUtil
