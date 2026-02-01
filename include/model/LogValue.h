@@ -54,6 +54,7 @@ using LogValueBase = std::variant<
 
 struct LogValue : LogValueBase {
     using LogValueBase::LogValueBase;
+    LogValue(std::nullopt_t) : LogValueBase(std::monostate{}) {}
     
     LogValue(LogList list);
     LogValue(LogObject obj);

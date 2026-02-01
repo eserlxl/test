@@ -370,6 +370,7 @@ gemini_cli_apply_global_options(gemini-cli)
 # --- Testing Setup ---
 
 if (BUILD_TESTS)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     find_package(GTest CONFIG QUIET) # Try to find system GTest first
 
     if (NOT GTest_FOUND AND GEMINI_CLI_FETCH_GTEST)
@@ -402,7 +403,7 @@ if (BUILD_TESTS)
             message(STATUS "Custom target 'generateTestReports' added for CTest XML reports.")
         endif()
         # LogAnalyzer Tests
-        add_executable(LogAnalyzerTest tests/LogAnalyzerTest.cpp)
+        add_executable(LogAnalyzerTest tests/analyzer/LogAnalyzerTest.cpp)
         target_link_libraries(LogAnalyzerTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -411,7 +412,7 @@ if (BUILD_TESTS)
         add_test(NAME LogAnalyzerTest COMMAND LogAnalyzerTest)
 
         # LogEntry Tests
-        add_executable(LogEntryTest tests/LogEntryTest.cpp)
+        add_executable(LogEntryTest tests/model/LogEntryTest.cpp)
         target_link_libraries(LogEntryTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -420,7 +421,7 @@ if (BUILD_TESTS)
         add_test(NAME LogEntryTest COMMAND LogEntryTest)
 
         # LogValue Tests
-        add_executable(LogValueTest tests/LogValueTest.cpp)
+        add_executable(LogValueTest tests/model/LogValueTest.cpp)
         target_link_libraries(LogValueTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -429,7 +430,7 @@ if (BUILD_TESTS)
         add_test(NAME LogValueTest COMMAND LogValueTest)
 
         # ReportGenerator Tests
-        add_executable(ReportGeneratorTest tests/ReportGeneratorTest.cpp)
+        add_executable(ReportGeneratorTest tests/analyzer/ReportGeneratorTest.cpp)
         target_link_libraries(ReportGeneratorTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -438,7 +439,7 @@ if (BUILD_TESTS)
         add_test(NAME ReportGeneratorTest COMMAND ReportGeneratorTest)
 
         # Statistics Tests
-        add_executable(StatisticsTest tests/StatisticsTest.cpp)
+        add_executable(StatisticsTest tests/analyzer/StatisticsTest.cpp)
         target_link_libraries(StatisticsTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -447,7 +448,7 @@ if (BUILD_TESTS)
         add_test(NAME StatisticsTest COMMAND StatisticsTest)
 
         # LogEntrySerialization Tests
-        add_executable(LogEntrySerializationTest tests/LogEntrySerializationTest.cpp)
+        add_executable(LogEntrySerializationTest tests/model/LogEntrySerializationTest.cpp)
         target_link_libraries(LogEntrySerializationTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -456,7 +457,7 @@ if (BUILD_TESTS)
         add_test(NAME LogEntrySerializationTest COMMAND LogEntrySerializationTest)
 
         # Filtering Tests
-        add_executable(FilteringTest tests/FilteringTest.cpp)
+        add_executable(FilteringTest tests/analyzer/FilteringTest.cpp)
         target_link_libraries(FilteringTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -465,7 +466,7 @@ if (BUILD_TESTS)
         add_test(NAME FilteringTest COMMAND FilteringTest)
 
         # ParsingConfig Tests
-        add_executable(ParsingConfigTest tests/ParsingConfigTest.cpp)
+        add_executable(ParsingConfigTest tests/analyzer/ParsingConfigTest.cpp)
         target_link_libraries(ParsingConfigTest PRIVATE
             GTest::gtest_main
             gemini-core
@@ -474,13 +475,22 @@ if (BUILD_TESTS)
         add_test(NAME ParsingConfigTest COMMAND ParsingConfigTest)
 
         # LogTimeUtil Tests
-        add_executable(LogTimeUtilTest tests/LogTimeUtilTest.cpp)
+        add_executable(LogTimeUtilTest tests/util/LogTimeUtilTest.cpp)
         target_link_libraries(LogTimeUtilTest PRIVATE
             GTest::gtest_main
             gemini-core
         )
         gemini_cli_apply_global_options(LogTimeUtilTest)
         add_test(NAME LogTimeUtilTest COMMAND LogTimeUtilTest)
+
+        # LogEntryHash Tests (new)
+        add_executable(LogEntryHashTest tests/model/LogEntryHashTest.cpp)
+        target_link_libraries(LogEntryHashTest PRIVATE
+            GTest::gtest_main
+            gemini-core
+        )
+        gemini_cli_apply_global_options(LogEntryHashTest)
+        add_test(NAME LogEntryHashTest COMMAND LogEntryHashTest)
 
     endif()
 endif()
