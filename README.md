@@ -46,7 +46,7 @@ The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive 
         *   `timezone`: Set the output timezone (`Local` or `UTC`).
     *   **Data Encoding**:
         *   `binary_encoding`: Choose how binary data is encoded (`Hex` or `Base64`).
-*   **Comparison and Utilities**: Supports comparison operations, level parsing, and conversion to `std::map<std::string, LogValue>`.
+*   **Comparison and Utilities**: Supports comparison operations, level parsing, conversion to `std::map<std::string, LogValue>`, and hashability for use in `std::unordered_set` and `std::unordered_map`.
 
 ### `LogAnalyzer` Features
 
