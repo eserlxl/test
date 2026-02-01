@@ -26,63 +26,61 @@ FormatOptions::FormatOptions(const ::LogFormattingOptions& model_opts)
 template<class Rep, class Period>
 std::string formatDuration(std::chrono::duration<Rep, Period> duration, bool compact) {
     using namespace std::chrono;
-    if (duration == duration.zero()) {
+    if (duration == duration_values<decltype(duration)>::zero()) {
         return "0s";
     }
 
     std::stringstream ss;
     auto d = duration;
-    if (d < d.zero()) {
+    if (d < duration_values<decltype(duration)>::zero()) {
         ss << "-";
         d = -d;
     }
 
-    // Using long long for duration_cast to avoid overflow for large values, then cast to original Rep
-    long long total_years = duration_cast<std::chrono::duration<long long, std::ratio<31556952>>>(d).count();
-    if (total_years > 0) {
-        ss << total_years << (compact ? "y" : " years");
-        d -= duration_cast<std::chrono::duration<Rep, Period>>(std::chrono::duration<long long, std::ratio<31556952>>(total_years));
+    using years = std::chrono::duration<long long, std::ratio<31556952>>;
+    using days = std::chrono::duration<long long, std::ratio<86400>>;
+    using double_seconds = std::chrono::duration<double>;
+
+    auto y = duration_cast<years>(d);
+    if (y.count() > 0) {
+        ss << y.count() << (compact ? "y" : " years");
+        d -= duration_cast<decltype(d)>(y);
     }
 
-    long long total_days = duration_cast<std::chrono::duration<long long, std::ratio<86400>>>(d).count();
-    if (total_days > 0) {
-        if (!ss.str().empty()) ss << " "; 
-        ss << total_days << (compact ? "d" : " days");
-        d -= duration_cast<std::chrono::duration<Rep, Period>>(std::chrono::duration<long long, std::ratio<86400>>(total_days));
+    auto dy = duration_cast<days>(d);
+    if (dy.count() > 0) {
+        if (ss.tellp() > 0 && ss.str() != "-") ss << " ";
+        ss << dy.count() << (compact ? "d" : " days");
+        d -= duration_cast<decltype(d)>(dy);
     }
 
-    long long total_hours = duration_cast<hours>(d).count();
-    if (total_hours > 0) {
-        if (!ss.str().empty()) ss << " ";
-        ss << total_hours << (compact ? "h" : " hours");
-        d -= duration_cast<std::chrono::duration<Rep, Period>>(hours(total_hours));
+    auto h = duration_cast<hours>(d);
+    if (h.count() > 0) {
+        if (ss.tellp() > 0 && ss.str() != "-") ss << " ";
+        ss << h.count() << (compact ? "h" : " hours");
+        d -= duration_cast<decltype(d)>(h);
     }
 
-    long long total_minutes = duration_cast<minutes>(d).count();
-    if (total_minutes > 0) {
-        if (!ss.str().empty()) ss << " ";
-        ss << total_minutes << (compact ? "m" : " minutes");
-        d -= duration_cast<std::chrono::duration<Rep, Period>>(minutes(total_minutes));
+    auto m = duration_cast<minutes>(d);
+    if (m.count() > 0) {
+        if (ss.tellp() > 0 && ss.str() != "-") ss << " ";
+        ss << m.count() << (compact ? "m" : " minutes");
+        d -= duration_cast<decltype(d)>(m);
     }
 
-    long long total_seconds = duration_cast<seconds>(d).count();
-    auto fractional_nanos_duration = d - seconds(total_seconds); 
-    long long fractional_nanos_count = fractional_nanos_duration.count();
-
-    bool printed_any_major_unit = (total_years > 0 || total_days > 0 || total_hours > 0 || total_minutes > 0);
-
-    if (total_seconds > 0 || (!printed_any_major_unit && fractional_nanos_count == 0 && ss.str().empty())) { 
-        if (printed_any_major_unit) ss << " ";
-        ss << total_seconds;
-        if (fractional_nanos_count > 0) {
-            ss << ".";
-            std::string nanos_str = std::to_string(fractional_nanos_count);
-            nanos_str = std::string(9 - nanos_str.length(), '0') + nanos_str;
-            nanos_str.erase(nanos_str.find_last_not_of('0') + 1, std::string::npos); // Trim trailing zeros
-            ss << nanos_str;
+    auto s = duration_cast<seconds>(d);
+    if (s.count() > 0) {
+        if (ss.tellp() > 0 && ss.str() != "-") ss << " ";
+        ss << s.count();
+        d -= duration_cast<decltype(d)>(s);
+        if (d.count() > 0) {
+            auto frac_s = duration_cast<double_seconds>(d);
+            std::string frac_str = std::to_string(frac_s.count());
+            ss << frac_str.substr(frac_str.find('.'));
         }
         ss << (compact ? "s" : " seconds");
-    } else if (fractional_nanos_count > 0 && !printed_any_major_unit) { // Only fractional seconds if no major units and no whole seconds
+    } else if (d.count() > 0) {
+        if (ss.tellp() > 0 && ss.str() != "-") ss << " ";
         auto ms = duration_cast<milliseconds>(d);
         if (ms.count() > 0) {
             ss << ms.count() << (compact ? "ms" : " milliseconds");
@@ -91,10 +89,15 @@ std::string formatDuration(std::chrono::duration<Rep, Period> duration, bool com
             if (us.count() > 0) {
                 ss << us.count() << (compact ? "us" : " microseconds");
             } else {
-                ss << fractional_nanos_count << (compact ? "ns" : " nanoseconds");
+                ss << duration_cast<nanoseconds>(d).count() << (compact ? "ns" : " nanoseconds");
             }
         }
+    } else if (ss.tellp() > 0 && y.count() == 0 && dy.count() == 0) {
+        // If we printed hours or minutes, but seconds is zero.
+        ss << " 0" << (compact ? "s" : " seconds");
     }
+
+
     return ss.str();
 }
 
@@ -110,26 +113,30 @@ std::string getFractionalString(std::chrono::system_clock::time_point tp, ::LogP
         return "";
     }
     
-    auto since_epoch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch());
-    long long seconds_part_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::floor<std::chrono::seconds>(tp).time_since_epoch()).count();
-    long long fractional_ns_val = since_epoch_ns.count() - seconds_part_ns;
-    
-    if (fractional_ns_val == 0) {
+    auto since_epoch = tp.time_since_epoch();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+    auto fractional = since_epoch - seconds;
+    long long fractional_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(fractional).count();
+
+    if (fractional_ns == 0) {
         return "";
     }
 
     std::stringstream ss;
     ss << ".";
-    std::string nanos_str = std::to_string(fractional_ns_val);
-    // Pad with leading zeros to 9 digits for nanoseconds
+    std::string nanos_str = std::to_string(fractional_ns);
+    // Pad with leading zeros up to 9 digits if necessary
     if (nanos_str.length() < 9) {
         nanos_str.insert(0, 9 - nanos_str.length(), '0');
     }
+    
+    // Trim trailing zeros
+    nanos_str.erase(nanos_str.find_last_not_of('0') + 1, std::string::npos);
 
     switch (precision) {
-        case ::LogPrecision::Millis:      ss << nanos_str.substr(0, 3); break;
-        case ::LogPrecision::Micros:     ss << nanos_str.substr(0, 6); break;
-        case ::LogPrecision::Nanos:      ss << nanos_str.substr(0, 9); break;
+        case ::LogPrecision::Millis: ss << nanos_str.substr(0, std::min((size_t)3, nanos_str.length())); break;
+        case ::LogPrecision::Micros: ss << nanos_str.substr(0, std::min((size_t)6, nanos_str.length())); break;
+        case ::LogPrecision::Nanos:  ss << nanos_str.substr(0, std::min((size_t)9, nanos_str.length())); break;
         default: return ""; 
     }
     return ss.str();
@@ -144,51 +151,33 @@ std::string formatTimestamp(std::chrono::system_clock::time_point tp, const Form
 
     const std::chrono::time_zone* tz_ptr = nullptr;
     try {
-        const std::chrono::time_zone& current_zone_ref = std::chrono::current_zone();
-        const std::chrono::time_zone& utc_zone_ref = std::chrono::locate_zone("UTC");
-        tz_ptr = (opts.timezone == ::LogTimezone::Local) ? &current_zone_ref : &utc_zone_ref;
-    } catch (const std::exception& e) { 
+        if (opts.timezone == ::LogTimezone::Local) {
+            tz_ptr = std::chrono::current_zone();
+        } else {
+            tz_ptr = std::chrono::locate_zone("UTC");
+        }
+    } catch (const std::exception& e) { // Catching std::exception is safer
         std::cerr << "Warning: Timezone error during formatting: " << e.what() << ". Falling back to UTC." << std::endl;
-        tz_ptr = &std::chrono::locate_zone("UTC");
+        tz_ptr = std::chrono::locate_zone("UTC");
     }
     
-    std::string formatted_str;
-    if (opts.custom_format.has_value()) {
-        std::time_t tt = std::chrono::system_clock::to_time_t(tp);
-        std::tm tm_buf;
-#if defined(_WIN32) || defined(_WIN64)
-        if (opts.timezone == ::LogTimezone::UTC) {
-            gmtime_s(&tm_buf, &tt);
-        } else {
-            localtime_s(&tm_buf, &tt);
-        }
-#else
-        if (opts.timezone == ::LogTimezone::UTC) {
-            gmtime_r(&tt, &tm_buf);
-        } else {
-            localtime_r(&tt, &tm_buf);
-        }
-#endif
-        std::array<char, 128> buffer; 
-        if (std::strftime(buffer.data(), buffer.size(), opts.custom_format->c_str(), &tm_buf) > 0) {
-            formatted_str = buffer.data();
-        } else {
-            formatted_str = "Invalid custom format or buffer too small";
-        }
-
-    } else { // ISO8601 or RFC3339 default
-        std::chrono::zoned_time zt_temp(tz_ptr, tp);
-        formatted_str = std::format("{:%Y-%m-%dT%H:%M:%S}", zt_temp);
+    std::string format_str;
+    if (opts.custom_format.has_value() && !opts.custom_format->empty()) {
+        format_str = "{:" + *opts.custom_format + "}";
+    } else {
+        format_str = "{:%Y-%m-%dT%H:%M:%S}";
     }
-
+    
+    std::chrono::zoned_time zt(tz_ptr, tp);
+    std::string formatted_str = std::vformat(format_str, std::make_format_args(zt));
+    
     formatted_str += getFractionalString(tp, opts.precision);
     
-    if (!opts.custom_format.has_value()) { 
-        std::chrono::zoned_time zt_temp(tz_ptr, tp); 
+    if (!opts.custom_format.has_value() || opts.custom_format->empty()) {
         if (opts.timezone == ::LogTimezone::UTC) {
             formatted_str += "Z";
         } else {
-             formatted_str += std::format("{:%Ez}", zt_temp);
+             formatted_str += std::format("{:%Ez}", zt);
         }
     }
     
@@ -218,36 +207,25 @@ std::string formatTimestamp(
 
     const std::chrono::time_zone* tz_ptr;
     try {
-        tz_ptr = &std::chrono::locate_zone(timezone_name);
-    } catch (const std::exception& e) { 
+        tz_ptr = std::chrono::locate_zone(timezone_name);
+    } catch (const std::exception& e) { // Catching std::exception is safer
         throw std::runtime_error("Invalid IANA timezone name: " + timezone_name + " - " + e.what());
     }
 
-    std::string formatted_str;
-    if (opts.custom_format.has_value()) {
-        std::time_t tt = std::chrono::system_clock::to_time_t(tp);
-        std::tm tm_buf;
-        // The problem: strftime for a specific IANA timezone requires converting system_clock::time_point
-        // to a local_time in that IANA timezone, then to std::tm. This is complex and problematic for strftime.
-        // The simplest approach is to use std::format or document this limitation.
-        // For custom formats in an IANA timezone, we'll try to use std::format with the custom pattern.
-        // This relies on std::format handling the pattern, which it may not for all strftime patterns.
-        // A more robust solution for full strftime custom patterns in arbitrary IANA timezones would be very complex.
-        
-        // As a best-effort, attempt to format via std::format. If the pattern is not compatible, it might fail.
-        // This is a known limitation of std::format not supporting arbitrary strftime patterns.
-        formatted_str = std::format("{:" + *opts.custom_format + "}", std::chrono::zoned_time(tz_ptr, tp));
-
-    } else { // ISO8601 or RFC3339 default
-        std::chrono::zoned_time zt_temp(tz_ptr, tp);
-        formatted_str = std::format("{:%Y-%m-%dT%H:%M:%S}", zt_temp);
+    std::string format_str;
+    if (opts.custom_format.has_value() && !opts.custom_format->empty()) {
+        format_str = "{:" + *opts.custom_format + "}";
+    } else {
+        format_str = "{:%Y-%m-%dT%H:%M:%S}";
     }
+    
+    std::chrono::zoned_time zt(tz_ptr, tp);
+    std::string formatted_str = std::vformat(format_str, std::make_format_args(zt));
     
     formatted_str += getFractionalString(tp, opts.precision);
 
-    if (!opts.custom_format.has_value()) { 
-        std::chrono::zoned_time zt_temp(tz_ptr, tp); 
-        formatted_str += std::format("{:%Ez}", zt_temp);
+    if (!opts.custom_format.has_value() || opts.custom_format->empty()) {
+        formatted_str += std::format("{:%Ez}", zt);
     }
     
     return formatted_str;
@@ -256,6 +234,10 @@ std::string formatTimestamp(
 std::vector<std::string> getAvailableTimezones() {
     std::vector<std::string> timezones;
     const auto& db = std::chrono::get_tzdb();
+    if (db.zones.empty()) {
+        // Fallback for environments where the TZ database is not available
+        return {"UTC", "GMT", "Etc/UTC"}; 
+    }
     for (const auto& zone : db.zones) {
         timezones.push_back(std::string(zone.name()));
     }
@@ -280,72 +262,45 @@ std::string generateLogEntryTimestampString(
 }
 
 ParseResult parseIso8601WithOffset(std::string_view timestamp_str, const ParseOptions& opts) {
-    std::chrono::sys_seconds tp_sec; 
-    std::istringstream in{std::string(timestamp_str)};
-    in.imbue(std::locale("C"));
+    std::chrono::system_clock::time_point tp;
+    std::string s(timestamp_str);
 
-    // Try parsing with 'T' separator, fractional seconds, and timezone offset/Z
-    std::string format_full_T_offset = "%Y-%m-%dT%H:%M:%S%Z"; // %Z for Z or offset
-    std::string format_full_T_no_offset = "%Y-%m-%dT%H:%M:%S";
+    std::istringstream in(s);
+    in.imbue(std::locale::classic());
 
-    // Try parsing with ' ' separator, fractional seconds, and timezone offset/Z
-    std::string format_full_space_offset = "%Y-%m-%d %H:%M:%S%Z";
-    std::string format_full_space_no_offset = "%Y-%m-%d %H:%M:%S";
-
-    std::array<std::string, 4> formats_to_try = {
-        format_full_T_offset, format_full_T_no_offset,
-        format_full_space_offset, format_full_space_no_offset
+    std::array<const char*, 4> formats_to_try = {
+        "%Y-%m-%dT%H:%M:%S%Z",
+        "%Y-%m-%d %H:%M:%S%Z",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S"
     };
 
-    bool parsed_successfully = false;
-    for (const auto& fmt_str : formats_to_try) {
-        in.clear(); 
-        in.seekg(0); 
-        // std::chrono::from_stream is used internally by std::chrono::parse
-        // parse into std::chrono::sys_seconds (seconds precision).
-        std::chrono::from_stream(in, fmt_str.c_str(), tp_sec); // Pass c_str() here!
-
-        if (!in.fail() && (in.eof() || !opts.strict)) { 
-            parsed_successfully = true;
-            break;
+    bool parsed = false;
+    for (const auto* fmt : formats_to_try) {
+        in.clear();
+        in.seekg(0);
+        in >> std::chrono::parse(fmt, tp);
+        if (!in.fail()) {
+            if (opts.strict) {
+                // Check for remaining unparsed characters
+                std::string remainder;
+                in >> remainder;
+                if (remainder.empty()) {
+                    parsed = true;
+                    break;
+                }
+            } else {
+                parsed = true;
+                break;
+            }
         }
     }
 
-    if (!parsed_successfully) {
+    if (!parsed) {
         return std::unexpected(ParseError::InvalidFormat);
     }
     
-    std::chrono::system_clock::time_point final_tp = tp_sec;
-
-    // Manually handle fractional seconds (if any remain) and apply to final_tp
-    char next_char = in.peek();
-    if (next_char == '.') {
-        in.get(); // Consume '.'
-        std::string fractional_str;
-        while (std::isdigit(in.peek())) {
-            fractional_str += static_cast<char>(in.get());
-        }
-
-        if (!fractional_str.empty()) {
-            // Convert fractional string to nanoseconds.
-            // Pad if less than 9 digits, truncate if more.
-            long long frac_val = std::stoll(fractional_str);
-            int digits = fractional_str.length();
-            if (digits > 9) {
-                frac_val = std::stoll(fractional_str.substr(0, 9));
-            } else if (digits < 9) {
-                frac_val *= static_cast<long long>(std::pow(10, 9 - digits));
-            }
-            final_tp += std::chrono::nanoseconds(frac_val);
-        }
-    }
-
-    // Check for remaining characters for strictness
-    if (opts.strict && !in.eof()) {
-        return std::unexpected(ParseError::InvalidFormat);
-    }
-
-    return final_tp;
+    return tp;
 }
 
 ParseResult parseTimestamp(
@@ -353,14 +308,14 @@ ParseResult parseTimestamp(
     ::LogTimestampFormat format_type,
     const ParseOptions& opts
 ) {
-    if (format_type == ::LogTimestampFormat::ISO8601 || format_type == ::LogTimestampFormat::RFC3339) {
+    if (format_type == ::LogTimestampFormat::ISO8601) {
         return parseIso8601WithOffset(timestamp_str, opts);
     } else if (format_type == ::LogTimestampFormat::UnixMillis) {
         try {
             std::string s{timestamp_str};
             size_t pos = 0;
             long long ms = std::stoll(s, &pos);
-            if (pos != s.length() && opts.strict) { // Check if entire string was consumed
+            if (pos != s.length() && opts.strict) {
                  return std::unexpected(ParseError::InvalidFormat);
             }
             return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
@@ -380,10 +335,10 @@ ParseResult parseTimestamp(
 ) {
     std::chrono::system_clock::time_point tp;
     std::istringstream in{std::string(timestamp_str)};
-    in.imbue(std::locale("C"));
+    in.imbue(std::locale::classic());
     
     std::string format_string_copy{format_str};
-    in >> std::chrono::parse(format_string_copy.c_str(), tp); // Pass c_str() here!
+    in >> std::chrono::parse(format_string_copy, tp);
 
     if (in.fail() || (opts.strict && !in.eof())) {
         return std::unexpected(ParseError::InvalidFormat);
@@ -402,10 +357,6 @@ ParseResult parseTimestamp(
     }
 
     return parseTimestamp(timestamp_str, ::LogTimestampFormat::UnixMillis, non_strict_opts);
-}
-
-std::string to_string(std::chrono::nanoseconds ns) {
-    return formatDuration(ns, true);
 }
 
 } // namespace LogTimeUtil
