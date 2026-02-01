@@ -79,8 +79,9 @@ The `LogEntry` class is at the heart of `logAnalyzer`, offering a comprehensive 
 
 The `LogAnalyzer` class provides a high-level interface for processing, analyzing, and exporting log data:
 
-*   **Versatile Log Loading**: Process logs from various sources, including single files, directories (recursively), and standard input. Supports high-performance parallel and asynchronous file loading.
-*   **Real-time Monitoring**: Live-monitor log files with `tailFile`, providing a `tail -f`-like capability to process new log entries as they are written.
+*   **Versatile Log Loading**: The `LogLoader` component provides robust mechanisms to process logs from various sources. It supports loading single files, directories (recursively), and standard input, with options for synchronous, asynchronous, and high-performance parallel file loading.
+*   **Log Streaming with Generators**: Utilize `std::generator` provided by `LogLoader` to efficiently stream log entries, including filtered ones, allowing for processing large log files without loading them entirely into memory.
+*   **Real-time Monitoring**: Through `LogLoader`'s `tailFile` functionality, monitor log files in real-time, providing a `tail -f`-like capability to process and analyze new log entries as they are written.
 *   **Flexible Parsing**: A powerful and configurable regex-based engine (`ParsingConfig`) allows for parsing a wide variety of log formats. It supports multi-line log entries, named capture groups for regex, and custom field parsers. A key feature is the ability to parse timestamps from arbitrary formats using `strftime`-compatible format strings, in addition to built-in support for ISO 8601 and Unix timestamps.
 *   **Powerful Filtering Engine**:
     *   **User-Friendly Query Language**: Filter logs using simple, intuitive query strings (e.g., `level:ERROR AND http.status >= 500`).
