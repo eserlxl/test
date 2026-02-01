@@ -85,7 +85,7 @@ The `LogAnalyzer` class provides a high-level interface for processing, analyzin
 *   **Flexible Parsing**: A powerful and configurable regex-based engine (`ParsingConfig`) allows for parsing a wide variety of log formats. It supports multi-line log entries, named capture groups for regex, and custom field parsers. A key feature is the ability to parse timestamps from arbitrary formats using `strftime`-compatible format strings, in addition to built-in support for ISO 8601 and Unix timestamps.
 *   **Powerful Filtering Engine**:
     *   **User-Friendly Query Language**: Filter logs using simple, intuitive query strings (e.g., `level:ERROR AND http.status >= 500`).
-    *   **Composable Predicates**: Programmatically build complex filter logic using a tree of predicates (`And`, `Or`, `Not`, `Keyword`, `Regex`, `Attribute`, `TimeRange`, etc.).
+    *   **Composable Predicates**: Programmatically build complex filter logic using a tree of predicates (`And`, `Or`, `Not`, `Keyword`, `Regex`, `LogLevel`, `Attribute` (supporting various comparisons), `Tag`, `TimeRange`, etc.).
 *   **Advanced Analysis**: Go beyond simple counts with advanced statistical analysis, configurable via `AnalysisConfig`:
     *   **Message Templating**: Group similar log messages into templates to identify common event types.
     *   **Attribute Analysis**: Compute value distributions and top-N occurrences for specified attributes to understand trends.
