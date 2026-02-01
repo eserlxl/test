@@ -649,7 +649,7 @@ std::expected<LogAnalysisConfig, std::string> parseYamlConfig(const std::string&
 
 std::expected<std::string, std::string> serializeYamlConfig(const LogAnalysisConfig& config) {
     try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Node node = YAML::convert<LogAnalysisConfig>::encode(config);
         YAML::Emitter emitter;
         emitter << node;
         if (emitter.good()) {
@@ -715,7 +715,7 @@ std::expected<LogAnalysis::FilterOptions, std::string> parseYamlFilterOptions(co
 
 std::expected<std::string, std::string> serializeYamlFilterOptions(const LogAnalysis::FilterOptions& options) {
     try {
-        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Node node = YAML::convert<LogAnalysis::FilterOptions>::encode(options);
         YAML::Emitter emitter;
         emitter << node;
         if (emitter.good()) {
@@ -745,7 +745,7 @@ std::expected<LogAnalysis::AnalysisConfig, std::string> parseYamlAnalysisConfig(
 
 std::expected<std::string, std::string> serializeYamlAnalysisConfig(const LogAnalysis::AnalysisConfig& config) {
     try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Node node = YAML::convert<LogAnalysis::AnalysisConfig>::encode(config);
         YAML::Emitter emitter;
         emitter << node;
         if (emitter.good()) {
@@ -775,7 +775,7 @@ std::expected<LogAnalysis::RetrievalOptions, std::string> parseYamlRetrievalOpti
 
 std::expected<std::string, std::string> serializeYamlRetrievalOptions(const LogAnalysis::RetrievalOptions& options) {
     try {
-        YAML::Node node = options; // Convert options to YAML::Node via specialization
+        YAML::Node node = YAML::convert<LogAnalysis::RetrievalOptions>::encode(options);
         YAML::Emitter emitter;
         emitter << node;
         if (emitter.good()) {
@@ -805,7 +805,7 @@ std::expected<LogAnalysis::TextOutputConfig, std::string> parseYamlTextOutputCon
 
 std::expected<std::string, std::string> serializeYamlTextOutputConfig(const LogAnalysis::TextOutputConfig& config) {
     try {
-        YAML::Node node = config; // Convert config to YAML::Node via specialization
+        YAML::Node node = YAML::convert<LogAnalysis::TextOutputConfig>::encode(config);
         YAML::Emitter emitter;
         emitter << node;
         if (emitter.good()) {
