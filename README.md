@@ -53,7 +53,7 @@ The `LogAnalyzer` class provides a high-level interface for processing, analyzin
 
 *   **Versatile Log Loading**: Process logs from various sources, including single files, directories (recursively), and standard input. Supports high-performance parallel and asynchronous file loading.
 *   **Real-time Monitoring**: Live-monitor log files with `tailFile`, providing a `tail -f`-like capability to process new log entries as they are written.
-*   **Flexible Parsing**: A powerful and configurable regex-based engine (`ParsingConfig`) allows for parsing a wide variety of log formats, with support for multi-line log entries, named capture groups, and custom field parsers.
+*   **Flexible Parsing**: A powerful and configurable regex-based engine (`ParsingConfig`) allows for parsing a wide variety of log formats. It supports multi-line log entries, named capture groups for regex, and custom field parsers. A key feature is the ability to parse timestamps from arbitrary formats using `strftime`-compatible format strings, in addition to built-in support for ISO 8601 and Unix timestamps.
 *   **Powerful Filtering Engine**:
     *   **User-Friendly Query Language**: Filter logs using simple, intuitive query strings (e.g., `level:ERROR AND http.status >= 500`).
     *   **Composable Predicates**: Programmatically build complex filter logic using a tree of predicates (`And`, `Or`, `Not`, `Keyword`, `Regex`, `Attribute`, `TimeRange`, etc.).
