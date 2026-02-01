@@ -25,7 +25,7 @@ if (LOGANALYZER_USE_VCPKG)
         if (CMAKE_TOOLCHAIN_FILE MATCHES ".*vcpkg.cmake")
             message(STATUS "Vcpkg toolchain file found: ${CMAKE_TOOLCHAIN_FILE}")
             if (NOT "${LOGANALYZER_VCPKG_TRIPLET}" STREQUAL "")
-                set(VCPKG_TARGET_TRIPLET "${GEMINI_CLI_VCPKG_TRIPLET}")
+                set(VCPKG_TARGET_TRIPLET "${LOGANALYZER_VCPKG_TRIPLET}")
                 message(STATUS "Vcpkg target triplet set to: ${VCPKG_TARGET_TRIPLET}")
             endif()
         else()
@@ -41,7 +41,10 @@ if (LOGANALYZER_ENABLE_CLANG_FORMAT)
         
         # Define a custom target for applying code formatting
         add_custom_target(clangFormat
-            COMMAND ${CLANG_FORMAT_EXECUTABLE} -i -style=file ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h ${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp
+            COMMAND ${CLANG_FORMAT_EXECUTABLE} -i -style=file
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/**/*.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/**/*.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/**/*.cpp
             COMMENT "Running clang-format on C++ source and header files"
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
@@ -100,12 +103,12 @@ if (LOGANALYZER_USE_CONAN)
             BUILD
                 missing
             PROFILE
-                ${GEMINI_CLI_CONAN_PROFILE}
+                ${LOGANALYZER_CONAN_PROFILE}
             BASIC_SETUP
             CMAKE_TARGETS # Integrate Conan packages as CMake targets
         )
     else()
-        message(FATAL_ERROR "Could not find conan.cmake toolchain file. Please ensure Conan is installed and conan.cmake is findable, or disable GEMINI_CLI_USE_CONAN.")
+        message(FATAL_ERROR "Could not find conan.cmake toolchain file. Please ensure Conan is installed and conan.cmake is findable, or disable LOGANALYZER_USE_CONAN.")
     endif()
 endif()
 
@@ -140,43 +143,43 @@ option(BUILD_TESTS "Build unit tests" ON)
 
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(ENABLE_CODE_COVERAGE "Enable code coverage instrumentation (gcov/lcov)" OFF)
-option(BUILD_SHARED_LIBS "Build gemini-core as a shared library instead of static" OFF)
-option(GEMINI_CLI_FETCH_GTEST "Use FetchContent to download and build GTest if not found" OFF)
-option(GEMINI_CLI_FETCH_CLI11 "Use FetchContent to download and build CLI11 if not found" ON)
+option(BUILD_SHARED_LIBS "Build loganalyzer-core as a shared library instead of static" OFF)
+option(LOGANALYZER_FETCH_GTEST "Use FetchContent to download and build GTest if not found" OFF)
+option(LOGANALYZER_FETCH_CLI11 "Use FetchContent to download and build CLI11 if not found" ON)
 option(BUILD_BENCHMARKS "Build benchmarking executables using Google Benchmark" OFF)
-option(GEMINI_CLI_FETCH_BENCHMARK "Use FetchContent to download and build Google Benchmark if not found" ON)
+option(LOGANALYZER_FETCH_BENCHMARK "Use FetchContent to download and build Google Benchmark if not found" ON)
 
 # Iteration 22 Features: New Options and Variables
-option(GEMINI_CLI_ENABLE_MODULES "Enable C++ Modules support (requires compatible compiler & CMake)" OFF)
-option(GEMINI_CLI_ENABLE_PCH "Enable Precompiled Headers (PCH) for faster compilation" OFF)
-option(GEMINI_CLI_ENABLE_CLANG_FORMAT "Enable clang-format check as a custom target" OFF)
-option(GEMINI_CLI_ENABLE_CLANG_TIDY "Enable clang-tidy analysis during compilation" OFF)
-option(GEMINI_CLI_USE_CONAN "Use Conan for dependency management" OFF)
-option(GEMINI_CLI_USE_VCPKG "Use vcpkg for dependency management" OFF)
-option(GEMINI_CLI_BUILD_DOCS "Build project documentation using Doxygen" OFF)
-option(GEMINI_CLI_GENERATE_TEST_REPORTS "Generate CTest XML reports for tests" OFF)
+option(LOGANALYZER_ENABLE_MODULES "Enable C++ Modules support (requires compatible compiler & CMake)" OFF)
+option(LOGANALYZER_ENABLE_PCH "Enable Precompiled Headers (PCH) for faster compilation" OFF)
+option(LOGANALYZER_ENABLE_CLANG_FORMAT "Enable clang-format check as a custom target" OFF)
+option(LOGANALYZER_ENABLE_CLANG_TIDY "Enable clang-tidy analysis during compilation" OFF)
+option(LOGANALYZER_USE_CONAN "Use Conan for dependency management" OFF)
+option(LOGANALYZER_USE_VCPKG "Use vcpkg for dependency management" OFF)
+option(LOGANALYZER_BUILD_DOCS "Build project documentation using Doxygen" OFF)
+option(LOGANALYZER_GENERATE_TEST_REPORTS "Generate CTest XML reports for tests" OFF)
 
-set(GEMINI_CLI_MSVC_WARNING_LEVEL "W3" CACHE STRING "MSVC warning level (e.g., W3, W4, WX)")
-set_property(CACHE GEMINI_CLI_MSVC_WARNING_LEVEL PROPERTY STRINGS "W0" "W1" "W2" "W3" "W4" "Wall" "WX")
+set(LOGANALYZER_MSVC_WARNING_LEVEL "W3" CACHE STRING "MSVC warning level (e.g., W3, W4, WX)")
+set_property(CACHE LOGANALYZER_MSVC_WARNING_LEVEL PROPERTY STRINGS "W0" "W1" "W2" "W3" "W4" "Wall" "WX")
 
-set(GEMINI_CLI_CONAN_PROFILE "" CACHE STRING "Conan profile to use (e.g., default, clang12, vs2019)")
-set(GEMINI_CLI_VCPKG_TRIPLET "" CACHE STRING "vcpkg triplet to use (e.g., x64-windows, x64-linux)")
-set(GEMINI_CLI_PCH_HEADER "" CACHE STRING "Path to the precompiled header file (e.g., stdafx.h or PCH.h)")
+set(LOGANALYZER_CONAN_PROFILE "" CACHE STRING "Conan profile to use (e.g., default, clang12, vs2019)")
+set(LOGANALYZER_VCPKG_TRIPLET "" CACHE STRING "vcpkg triplet to use (e.g., x64-windows, x64-linux)")
+set(LOGANALYZER_PCH_HEADER "" CACHE STRING "Path to the precompiled header file (e.g., stdafx.h or PCH.h)")
 
-set(GEMINI_CLI_EXTRA_COMPILE_OPTIONS "" CACHE STRING "Additional compile options to be applied to all targets")
-set(GEMINI_CLI_EXTRA_LINK_OPTIONS "" CACHE STRING "Additional link options to be applied to all linkable targets")
-set(GEMINI_CLI_CXX26_EXPERIMENTAL_FLAGS "" CACHE STRING "Compiler flags specifically for enabling experimental C++26 features (if CXX_STANDARD >= 26)")
+set(LOGANALYZER_EXTRA_COMPILE_OPTIONS "" CACHE STRING "Additional compile options to be applied to all targets")
+set(LOGANALYZER_EXTRA_LINK_OPTIONS "" CACHE STRING "Additional link options to be applied to all linkable targets")
+set(LOGANALYZER_CXX26_EXPERIMENTAL_FLAGS "" CACHE STRING "Compiler flags specifically for enabling experimental C++26 features (if CXX_STANDARD >= 26)")
 
 # Define a utility function to apply global options to targets
 function(gemini_cli_apply_global_options TARGET_NAME)
     # Apply extra compile options
-    if (NOT "${GEMINI_CLI_EXTRA_COMPILE_OPTIONS}" STREQUAL "")
-        target_compile_options(${TARGET_NAME} PRIVATE ${GEMINI_CLI_EXTRA_COMPILE_OPTIONS})
+    if (NOT "${LOGANALYZER_EXTRA_COMPILE_OPTIONS}" STREQUAL "")
+        target_compile_options(${TARGET_NAME} PRIVATE ${LOGANALYZER_EXTRA_COMPILE_OPTIONS})
     endif()
 
     # Apply extra link options
-    if (NOT "${GEMINI_CLI_EXTRA_LINK_OPTIONS}" STREQUAL "")
-        target_link_options(${TARGET_NAME} PRIVATE ${GEMINI_CLI_EXTRA_LINK_OPTIONS})
+    if (NOT "${LOGANALYZER_EXTRA_LINK_OPTIONS}" STREQUAL "")
+        target_link_options(${TARGET_NAME} PRIVATE ${LOGANALYZER_EXTRA_LINK_OPTIONS})
     endif()
 
     # Apply code coverage instrumentation if enabled
@@ -186,7 +189,7 @@ function(gemini_cli_apply_global_options TARGET_NAME)
     endif()
 
     # Apply C++ Modules flags if enabled
-    if (GEMINI_CLI_ENABLE_MODULES)
+    if (LOGANALYZER_ENABLE_MODULES)
         if (CMAKE_VERSION VERSION_LESS "3.19")
             message(WARNING "C++ Modules support requires CMake 3.19 or higher. Skipping for target ${TARGET_NAME}.")
         else()
@@ -220,21 +223,21 @@ function(gemini_cli_apply_global_options TARGET_NAME)
     endif()
 
     # Apply Precompiled Headers (PCH) if enabled
-    if (GEMINI_CLI_ENABLE_PCH)
-        if (GEMINI_CLI_PCH_HEADER)
-            if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${GEMINI_CLI_PCH_HEADER}")
-                target_precompile_headers(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/${GEMINI_CLI_PCH_HEADER}")
-                message(STATUS "Precompiled Headers enabled for target ${TARGET_NAME} using ${GEMINI_CLI_PCH_HEADER}.")
+    if (LOGANALYZER_ENABLE_PCH)
+        if (LOGANALYZER_PCH_HEADER)
+            if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${LOGANALYZER_PCH_HEADER}")
+                target_precompile_headers(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/${LOGANALYZER_PCH_HEADER}")
+                message(STATUS "Precompiled Headers enabled for target ${TARGET_NAME} using ${LOGANALYZER_PCH_HEADER}.")
             else()
-                message(WARNING "GEMINI_CLI_PCH_HEADER '${GEMINI_CLI_PCH_HEADER}' not found at '${CMAKE_CURRENT_SOURCE_DIR}/${GEMINI_CLI_PCH_HEADER}'. PCH not applied to target ${TARGET_NAME}.")
+                message(WARNING "LOGANALYZER_PCH_HEADER '${LOGANALYZER_PCH_HEADER}' not found at '${CMAKE_CURRENT_SOURCE_DIR}/${LOGANALYZER_PCH_HEADER}'. PCH not applied to target ${TARGET_NAME}.")
             endif()
         else()
-            message(STATUS "PCH enabled for target ${TARGET_NAME}, but GEMINI_CLI_PCH_HEADER is not specified. Skipping PCH for this target.")
+            message(STATUS "PCH enabled for target ${TARGET_NAME}, but LOGANALYZER_PCH_HEADER is not specified. Skipping PCH for this target.")
         endif()
     endif()
 
     # Apply Clang-Tidy if enabled
-    if (GEMINI_CLI_ENABLE_CLANG_TIDY)
+    if (LOGANALYZER_ENABLE_CLANG_TIDY)
         # CMAKE_CXX_CLANG_TIDY is a global property, but can be set per-target too.
         # For simplicity, we assume it's applied globally if enabled.
         # If per-target setup is needed, this function can be extended.
@@ -242,51 +245,51 @@ function(gemini_cli_apply_global_options TARGET_NAME)
 
     # Apply MSVC warnings if the compiler is MSVC
     if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-        if (NOT "${GEMINI_CLI_MSVC_WARNING_LEVEL}" STREQUAL "")
+        if (NOT "${LOGANALYZER_MSVC_WARNING_LEVEL}" STREQUAL "")
             # Clear existing warning flags first for MSVC to avoid conflicts
             target_compile_options(${TARGET_NAME} PRIVATE /W0 /W1 /W2 /W3 /W4 /Wall /WX)
-            target_compile_options(${TARGET_NAME} PRIVATE "/${GEMINI_CLI_MSVC_WARNING_LEVEL}")
-            message(STATUS "Applying MSVC warning level /${GEMINI_CLI_MSVC_WARNING_LEVEL} to target ${TARGET_NAME}")
+            target_compile_options(${TARGET_NAME} PRIVATE "/${LOGANALYZER_MSVC_WARNING_LEVEL}")
+            message(STATUS "Applying MSVC warning level /${LOGANALYZER_MSVC_WARNING_LEVEL} to target ${TARGET_NAME}")
         endif()
     endif()
 
 endfunction()
-set(GEMINI_CLI_EXTRA_LINK_OPTIONS "" CACHE STRING "Additional link options to be applied to all linkable targets")
-set(GEMINI_CLI_CXX26_EXPERIMENTAL_FLAGS "" CACHE STRING "Compiler flags specifically for enabling experimental C++26 features (if CXX_STANDARD >= 26)")
+set(LOGANALYZER_EXTRA_LINK_OPTIONS "" CACHE STRING "Additional link options to be applied to all linkable targets")
+set(LOGANALYZER_CXX26_EXPERIMENTAL_FLAGS "" CACHE STRING "Compiler flags specifically for enabling experimental C++26 features (if CXX_STANDARD >= 26)")
 
-# Determine warning flags based on GEMINI_CLI_WARNING_LEVEL
+# Determine warning flags based on LOGANALYZER_WARNING_LEVEL
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(_default_warnings -Wall -Wextra -Wpedantic)
     set(_strict_warnings ${_default_warnings} -Werror -Wconversion -Wshadow -Wformat=2 -Wnull-dereference -Wdouble-promotion -Wold-style-cast -Wsuggest-override -Wno-unused-parameter)
 
     set(_current_warnings "")
-    # Ensure GEMINI_CLI_WARNING_LEVEL has a default if not explicitly set
-    if (NOT DEFINED GEMINI_CLI_WARNING_LEVEL)
-        set(GEMINI_CLI_WARNING_LEVEL "DEFAULT" CACHE STRING "Controls the level of compiler warnings. Options: NONE, DEFAULT (-Wall -Wextra -Wpedantic), STRICT (-Werror, etc.), CUSTOM" FORCE)
-        set_property(CACHE GEMINI_CLI_WARNING_LEVEL PROPERTY STRINGS "NONE" "DEFAULT" "STRICT" "CUSTOM")
+    # Ensure LOGANALYZER_WARNING_LEVEL has a default if not explicitly set
+    if (NOT DEFINED LOGANALYZER_WARNING_LEVEL)
+        set(LOGANALYZER_WARNING_LEVEL "DEFAULT" CACHE STRING "Controls the level of compiler warnings. Options: NONE, DEFAULT (-Wall -Wextra -Wpedantic), STRICT (-Werror, etc.), CUSTOM" FORCE)
+        set_property(CACHE LOGANALYZER_WARNING_LEVEL PROPERTY STRINGS "NONE" "DEFAULT" "STRICT" "CUSTOM")
     endif()
 
-    if (GEMINI_CLI_WARNING_LEVEL STREQUAL "DEFAULT")
+    if (LOGANALYZER_WARNING_LEVEL STREQUAL "DEFAULT")
         set(_current_warnings "${_default_warnings}")
-    elseif (GEMINI_CLI_WARNING_LEVEL STREQUAL "STRICT")
+    elseif (LOGANALYZER_WARNING_LEVEL STREQUAL "STRICT")
         set(_current_warnings "${_strict_warnings}")
-    elseif (GEMINI_CLI_WARNING_LEVEL STREQUAL "CUSTOM")
+    elseif (LOGANALYZER_WARNING_LEVEL STREQUAL "CUSTOM")
         # Start with default warnings, then add/remove based on user input
         set(_custom_base_warnings "${_default_warnings}") # Or empty, depending on desired custom base behavior
-        list(APPEND _custom_base_warnings ${GEMINI_CLI_ADDITIONAL_WARNINGS})
+        list(APPEND _custom_base_warnings ${LOGANALYZER_ADDITIONAL_WARNINGS})
         
         set(_final_custom_warnings "")
         foreach (_warning IN LISTS _custom_base_warnings)
-            list(FIND GEMINI_CLI_REMOVED_WARNINGS "${_warning}" _idx)
+            list(FIND LOGANALYZER_REMOVED_WARNINGS "${_warning}" _idx)
             if (_idx EQUAL -1) # Warning not in removed list
                 list(APPEND _final_custom_warnings "${_warning}")
             endif()
         endforeach()
         set(_current_warnings "${_final_custom_warnings}")
-    elseif (GEMINI_CLI_WARNING_LEVEL STREQUAL "NONE")
+    elseif (LOGANALYZER_WARNING_LEVEL STREQUAL "NONE")
         set(_current_warnings "")
     else()
-        message(WARNING "Unknown GEMINI_CLI_WARNING_LEVEL: ${GEMINI_CLI_WARNING_LEVEL}. No custom warnings will be applied.")
+        message(WARNING "Unknown LOGANALYZER_WARNING_LEVEL: ${LOGANALYZER_WARNING_LEVEL}. No custom warnings will be applied.")
     endif()
 
     if (NOT "${_current_warnings}" STREQUAL "")
@@ -299,10 +302,10 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Apply experimental C++26 flags if CXX_STANDARD is 26 or greater
-if (GEMINI_CLI_CXX_STANDARD GREATER_EQUAL 26)
-    if (NOT "${GEMINI_CLI_CXX26_EXPERIMENTAL_FLAGS}" STREQUAL "")
-        message(STATUS "Applying experimental C++26 flags: ${GEMINI_CLI_CXX26_EXPERIMENTAL_FLAGS}")
-        add_compile_options(${GEMINI_CLI_CXX26_EXPERIMENTAL_FLAGS})
+if (LOGANALYZER_CXX_STANDARD GREATER_EQUAL 26)
+    if (NOT "${LOGANALYZER_CXX26_EXPERIMENTAL_FLAGS}" STREQUAL "")
+        message(STATUS "Applying experimental C++26 flags: ${LOGANALYZER_CXX26_EXPERIMENTAL_FLAGS}")
+        add_compile_options(${LOGANALYZER_CXX26_EXPERIMENTAL_FLAGS})
     endif()
 endif()
 
@@ -333,34 +336,34 @@ set(GEMINI_CORE_SOURCES
 )
 
 if (BUILD_SHARED_LIBS)
-    add_library(gemini-core SHARED ${GEMINI_CORE_SOURCES})
+    add_library(loganalyzer-core SHARED ${GEMINI_CORE_SOURCES})
 else()
-    add_library(gemini-core STATIC ${GEMINI_CORE_SOURCES})
+    add_library(loganalyzer-core STATIC ${GEMINI_CORE_SOURCES})
 endif()
 
-target_include_directories(gemini-core PUBLIC
+target_include_directories(loganalyzer-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/util>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/gemini-cli>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/loganalyzer-cli>
 )
 
-target_link_libraries(gemini-core PRIVATE
+target_link_libraries(loganalyzer-core PRIVATE
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json # Or just nlohmann_json if target is not namespaced
 )
 
-gemini_cli_apply_global_options(gemini-core)
+gemini_cli_apply_global_options(loganalyzer-core)
 
 # --- Main Executable ---
-add_executable(gemini-cli src/main.cpp)
-target_link_libraries(gemini-cli PRIVATE
-    gemini-core
+add_executable(loganalyzer-cli src/main.cpp)
+target_link_libraries(loganalyzer-cli PRIVATE
+    loganalyzer-core
     CLI11::CLI11
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json # Link to executable as well
 )
 
-gemini_cli_apply_global_options(gemini-cli)
+gemini_cli_apply_global_options(loganalyzer-cli)
 
 # --- Testing Setup ---
 
@@ -368,7 +371,7 @@ if (BUILD_TESTS)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     find_package(GTest CONFIG QUIET) # Try to find system GTest first
 
-    if (NOT GTest_FOUND AND GEMINI_CLI_FETCH_GTEST)
+    if (NOT GTest_FOUND AND LOGANALYZER_FETCH_GTEST)
         message(STATUS "GTest not found, attempting to fetch with FetchContent...")
         include(FetchContent)
         FetchContent_Declare(
@@ -379,13 +382,13 @@ if (BUILD_TESTS)
         FetchContent_Populate(googletest)
         add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
         set(GTest_FOUND TRUE) # Manually set GTest_FOUND after FetchContent
-    elseif (NOT GTest_FOUND AND NOT GEMINI_CLI_FETCH_GTEST)
-        message(FATAL_ERROR "GTest not found. Please install GTest or enable GEMINI_CLI_FETCH_GTEST option.")
+    elseif (NOT GTest_FOUND AND NOT LOGANALYZER_FETCH_GTEST)
+        message(FATAL_ERROR "GTest not found. Please install GTest or enable LOGANALYZER_FETCH_GTEST option.")
     endif()
 
     if (GTest_FOUND)
         enable_testing()
-        if (GEMINI_CLI_GENERATE_TEST_REPORTS)
+        if (LOGANALYZER_GENERATE_TEST_REPORTS)
             set(CTEST_USE_LAUNCHERS ON) # Ensures CTest wrappers are used
             set(CTEST_OUTPUT_ON_FAILURE ON) # Show output for failed tests
 
@@ -403,7 +406,7 @@ if (BUILD_TESTS)
         add_executable(runTests ${TEST_SOURCES})
         target_link_libraries(runTests PRIVATE
             GTest::gtest_main
-            gemini-core
+            loganalyzer-core
         )
         gemini_cli_apply_global_options(runTests)
         add_test(NAME runTests COMMAND runTests)
@@ -421,7 +424,7 @@ if (BUILD_BENCHMARKS)
 
     find_package(Benchmark CONFIG QUIET) # Try to find system Google Benchmark first
 
-    if (NOT Benchmark_FOUND AND GEMINI_CLI_FETCH_BENCHMARK)
+    if (NOT Benchmark_FOUND AND LOGANALYZER_FETCH_BENCHMARK)
         message(STATUS "Google Benchmark not found, attempting to fetch with FetchContent...")
         include(FetchContent)
         FetchContent_Declare(
@@ -432,8 +435,8 @@ if (BUILD_BENCHMARKS)
         FetchContent_Populate(google_benchmark)
         add_subdirectory(${google_benchmark_SOURCE_DIR} ${google_benchmark_BINARY_DIR})
         set(Benchmark_FOUND TRUE) # Manually set Benchmark_FOUND after FetchContent
-    elseif (NOT Benchmark_FOUND AND NOT GEMINI_CLI_FETCH_BENCHMARK)
-        message(FATAL_ERROR "Google Benchmark not found. Please install Google Benchmark or enable GEMINI_CLI_FETCH_BENCHMARK option.")
+    elseif (NOT Benchmark_FOUND AND NOT LOGANALYZER_FETCH_BENCHMARK)
+        message(FATAL_ERROR "Google Benchmark not found. Please install Google Benchmark or enable LOGANALYZER_FETCH_BENCHMARK option.")
     endif()
 
     if (Benchmark_FOUND)
@@ -446,7 +449,7 @@ if (BUILD_BENCHMARKS)
                 add_executable(${bench_name} ${bench_src})
                 target_link_libraries(${bench_name} PRIVATE
                     Benchmark::benchmark_main
-                    gemini-core
+                    loganalyzer-core
                 )
                 gemini_cli_apply_global_options(${bench_name})
                 add_test(NAME ${bench_name} COMMAND ${bench_name}) # Add as a test for ctest integration
@@ -458,7 +461,7 @@ if (BUILD_BENCHMARKS)
 endif()
 
 # Documentation Generation with Doxygen
-if (GEMINI_CLI_BUILD_DOCS)
+if (LOGANALYZER_BUILD_DOCS)
     find_package(Doxygen QUIET)
     if (Doxygen_FOUND)
         message(STATUS "Doxygen found, documentation generation enabled.")
@@ -476,12 +479,12 @@ if (GEMINI_CLI_BUILD_DOCS)
         
         message(STATUS "Custom target 'generateDocs' added for Doxygen documentation.")
     else()
-        message(WARNING "Doxygen not found. Documentation will not be generated. Please install Doxygen or disable GEMINI_CLI_BUILD_DOCS.")
+        message(WARNING "Doxygen not found. Documentation will not be generated. Please install Doxygen or disable LOGANALYZER_BUILD_DOCS.")
     endif()
 endif()
 
 # FetchContent for CLI11 or find_package
-if (GEMINI_CLI_FETCH_CLI11)
+if (LOGANALYZER_FETCH_CLI11)
     message(STATUS "CLI11 not found, attempting to fetch with FetchContent...")
     include(FetchContent)
     FetchContent_Declare(
@@ -493,19 +496,19 @@ if (GEMINI_CLI_FETCH_CLI11)
 else()
     find_package(CLI11 CONFIG QUIET)
     if (NOT CLI11_FOUND)
-        message(FATAL_ERROR "CLI11 not found. Please install CLI11 or enable GEMINI_CLI_FETCH_CLI11 option.")
+        message(FATAL_ERROR "CLI11 not found. Please install CLI11 or enable LOGANALYZER_FETCH_CLI11 option.")
     endif()
 endif()
 
 # --- Installation ---
-# Install the gemini-cli executable
-install(TARGETS gemini-cli
+# Install the loganalyzer-cli executable
+install(TARGETS loganalyzer-cli
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
-# Install the gemini-core library
-install(TARGETS gemini-core
-    EXPORT gemini-cli-targets # Export for find_package later
+# Install the loganalyzer-core library
+install(TARGETS loganalyzer-core
+    EXPORT loganalyzer-cli-targets # Export for find_package later
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" # For static library
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" # For shared library
     FRAMEWORK DESTINATION "${CMAKE_INSTALL_LIBDIR}" # For macOS frameworks
@@ -513,14 +516,14 @@ install(TARGETS gemini-core
 
 # Install public headers
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gemini-cli"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/loganalyzer"
     FILES_MATCHING PATTERN "*.h"
 )
 
-# Generate a package configuration file for other projects to find gemini-cli
-# This will create gemini-cli-config.cmake and gemini-cli-targets.cmake
-install(EXPORT gemini-cli-targets
-    FILE gemini-cli-targets.cmake
-    NAMESPACE gemini-cli::
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/gemini-cli"
+# Generate a package configuration file for other projects to find loganalyzer-cli
+# This will create loganalyzer-cli-config.cmake and loganalyzer-cli-targets.cmake
+install(EXPORT loganalyzer-cli-targets
+    FILE loganalyzer-cli-targets.cmake
+    NAMESPACE loganalyzer::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/loganalyzer"
 )
